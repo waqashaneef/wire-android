@@ -514,28 +514,23 @@ val USER_DATABASE_MIGRATION_126_TO_127 = object : Migration(126, 127) {
     }
 
     private fun migrateMessageContentIndexTable(database: SupportSQLiteDatabase) {
-        val tempTableName = "MessageContentIndexTemp"
         val originalTableName = "MessageContentIndex"
         val messageId = "message_id"
         val convId = "conv_id"
         val content = "content"
         val time = "time"
-
-        val createTempTable = """CREATE VIRTUAL TABLE IF NOT EXISTS $tempTableName USING fts3(
+        val createTempTable = """CREATE VIRTUAL TABLE $originalTableName USING fts3(
              $messageId TEXT,
              $convId TEXT,
-             $content TEXT,
+             $content TEXT = 'Messages',
              $time INTEGER
              )""".trimIndent()
-
-        val insertIntoTempQuery = "INSERT INTO $tempTableName($originalTableName) VALUES ('rebuild')"
+        val rebuildTable = "INSERT INTO $originalTableName($originalTableName) VALUES ('rebuild')"
         val dropOldTable = "DROP TABLE $originalTableName"
-        val renameTableBack = "ALTER TABLE $tempTableName RENAME TO $originalTableName"
         with(database) {
-            execSQL(createTempTable)
-            execSQL(insertIntoTempQuery)
             execSQL(dropOldTable)
-            execSQL(renameTableBack)
+            execSQL(createTempTable)
+            execSQL(rebuildTable)
         }
     }
 
