@@ -7,7 +7,10 @@ import com.waz.zclient.storage.db.UserDatabase
 import org.junit.After
 import org.junit.Before
 
-abstract class UserDatabaseMigrationTest(val dbName: String, val version: Int) : IntegrationTest() {
+abstract class UserDatabaseMigrationTest(
+    private val dbName: String,
+    private val version: Int
+) : IntegrationTest() {
 
     protected lateinit var testOpenHelper: DbSQLiteOpenHelper
 
