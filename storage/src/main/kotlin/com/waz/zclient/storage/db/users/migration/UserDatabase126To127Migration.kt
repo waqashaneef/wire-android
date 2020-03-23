@@ -27,9 +27,9 @@ val USER_DATABASE_MIGRATION_126_TO_127 = object : Migration(126, 127) {
     override fun migrate(database: SupportSQLiteDatabase) {
         if (BuildConfig.KOTLIN_CORE) {
             //TODO Remove this
-            migrateClientTable(database)
         }
 
+        migrateClientTable(database)
         migrateUserTable(database)
         migrateAssetsTable(database)
         migrateConversationsTable(database)
@@ -521,16 +521,14 @@ val USER_DATABASE_MIGRATION_126_TO_127 = object : Migration(126, 127) {
         val content = "content"
         val time = "time"
 
-        val createTempTable = """
-             CREATE VIRTUAL TABLE $tempTableName USING FTS3(
-             $messageId TEXT NOT NULL,
-             $convId TEXT NOT NULL,
-             $content TEXT NOT NULL,
-             $time INTEGER NOT NULL,
-             content='Messages'
+        val createTempTable = """CREATE VIRTUAL TABLE IF NOT EXISTS $tempTableName USING fts3(
+             $messageId TEXT,
+             $convId TEXT,
+             $content TEXT,
+             $time INTEGER
              )""".trimIndent()
 
-        val insertIntoTempQuery = "INSERT INTO $tempTableName($tempTableName) VALUES ('rebuild')"
+        val insertIntoTempQuery = "INSERT INTO $tempTableName($originalTableName) VALUES ('rebuild')"
         val dropOldTable = "DROP TABLE $originalTableName"
         val renameTableBack = "ALTER TABLE $tempTableName RENAME TO $originalTableName"
         with(database) {
