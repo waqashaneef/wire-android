@@ -519,13 +519,8 @@ val USER_DATABASE_MIGRATION_126_TO_127 = object : Migration(126, 127) {
         val convId = "conv_id"
         val content = "content"
         val time = "time"
-        val createTempTable = """CREATE VIRTUAL TABLE $originalTableName USING fts3(
-             $messageId TEXT,
-             $convId TEXT,
-             $content TEXT = 'Messages',
-             $time INTEGER
-             )""".trimIndent()
-        val rebuildTable = "INSERT INTO $originalTableName($originalTableName) VALUES ('rebuild')"
+        val createTempTable = "CREATE VIRTUAL TABLE IF NOT EXISTS $originalTableName USING FTS3(`$messageId`, `$convId`, `$time`, 'content')"
+        val rebuildTable = "INSERT INTO MessageContentIndex('$messageId', '$convId', '$time', '$content') SELECT _id, $convId, $time, $content FROM messages"
         val dropOldTable = "DROP TABLE $originalTableName"
         with(database) {
             execSQL(dropOldTable)
