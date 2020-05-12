@@ -7,21 +7,21 @@ import groovy.json.JsonOutput
 
 buildscript {
     repositories {
-        flatDir {
-            dirs 'app/libs'
-        }
-        maven {
-            url "https://dl.bintray.com/wire-android/third-party"
-        }
+//        maven {
+//            url "https://dl.bintray.com/wire-android/third-party"
+//        }
         google()
         jcenter()
         mavenCentral()
+        flatDir {
+            dirs 'libs/'
+        }
     }
 
     dependencies {
         classpath 'com.android.tools.build:gradle:3.5.3'
         classpath 'com.mutualmobile.gradle.plugins:dexinfo:0.1.2'
-        classpath 'com.wire.gradle:gradle-android-scala-plugin:1.7'
+        classpath 'com.wire.gradle:gradle-android-scala-plugin:2.0.0-SNAPSHOT'
         classpath 'com.google.gms:google-services:3.1.1'
         classpath 'org.ajoberstar.grgit:grgit-core:3.0.0'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:${Versions.KOTLIN}"
