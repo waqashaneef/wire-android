@@ -33,14 +33,13 @@ import com.waz.service.push.PushService
 import com.waz.sync.SyncServiceHandle
 import com.waz.threading.Threading
 import com.waz.utils.events.EventContext
-import com.waz.utils.{RichFuture, RichWireInstant, Serialized}
+import com.waz.utils.{RichWireInstant, Serialized}
 
 import scala.collection.breakOut
 import scala.concurrent.Future
 
 trait ConnectionService {
   def connectionEventsStage: Stage.Atomic
-  def contactJoinEventsStage: Stage.Atomic
 
   def connectToUser(userId: UserId, message: String, name: Name): Future[Option[ConversationData]]
   def handleUserConnectionEvents(events: Seq[UserConnectionEvent]): Future[Unit]
@@ -67,15 +66,6 @@ class ConnectionServiceImpl(selfUserId:      UserId,
   private implicit val ec = EventContext.Global
 
   override val connectionEventsStage = EventScheduler.Stage[UserConnectionEvent]((c, e) => handleUserConnectionEvents(e))
-
-  override val contactJoinEventsStage = EventScheduler.Stage[ContactJoinEvent] { (c, es) =>
-    RichFuture.traverseSequential(es) { e =>
-      users.getOrCreateUser(e.user) flatMap { _ =>
-        // update user name if it was just created (has empty name)
-        users.updateUserData(e.user, u => if (u.name.isEmpty) u.copy(name = e.name) else u)
-      }
-    }
-  }
 
   override def handleUserConnectionEvents(events: Seq[UserConnectionEvent]) = {
     def updateOrCreate(event: UserConnectionEvent)(user: Option[UserData]): UserData =
@@ -265,7 +255,7 @@ class ConnectionServiceImpl(selfUserId:      UserId,
 
       for {
         allUsers <- usersStorage.listAll(convsInfo.map(_.toUser))
-        userMap   = allUsers.map(u => u.id -> Vector(u)).toMap
+        userMap   = allUsers.toIdMap
         remoteIds = convsInfo.map(i => convIdForUser(i.toUser) -> i.remoteId).toMap
         newConvs  = convsInfo.map {
           case OneToOneConvData(toUser, remoteId, convType) =>
@@ -276,7 +266,7 @@ class ConnectionServiceImpl(selfUserId:      UserId,
               name          = None,
               creator       = selfUserId,
               convType      = convType,
-              generatedName = NameUpdater.generatedName(convType)(userMap(toUser)),
+              generatedName = NameUpdater.generatedName(convType)(Seq(userMap(toUser))),
               team          = teamId,
               access        = Set(Access.PRIVATE),
               accessRole    = Some(AccessRole.PRIVATE)

@@ -29,7 +29,6 @@ import android.util.TypedValue
 import android.view.{Gravity, View}
 import android.widget.{TextView, Toast}
 import androidx.appcompat.app.AppCompatDialog
-import com.waz.api.Message
 import com.waz.content.MessagesStorage
 import com.waz.content.UserPreferences.DownloadImagesAlways
 import com.waz.log.BasicLogging.LogTag.DerivedLogTag
@@ -72,6 +71,7 @@ class AssetsController(implicit context: Context, inj: Injector, ec: EventContex
   val permissions: Signal[PermissionsService] = zms.map(_.permissions)
   val messages: Signal[MessagesService] = zms.map(_.messages)
   val messagesStorage: Signal[MessagesStorage] = zms.map(_.messagesStorage)
+  val openVideoProgress = Signal(false)
 
   lazy val messageActionsController: MessageActionsController = inject[MessageActionsController]
   lazy val singleImage: ISingleImageController = inject[ISingleImageController]
@@ -148,13 +148,12 @@ class AssetsController(implicit context: Context, inj: Injector, ec: EventContex
     case _ => ()
   }
 
-  def retry(m: MessageData) =
-    if (m.state == Message.Status.FAILED || m.state == Message.Status.FAILED_READ) messages.currentValue.foreach(_.retryMessageSending(m.convId, m.id))
+  def retry(m: MessageData): Unit =
+    if (m.isFailed) messages.currentValue.foreach(_.retryMessageSending(m.convId, m.id))
 
     def getPlaybackControls(asset: Signal[GeneralAsset]): Signal[PlaybackControls] = asset.flatMap { a =>
     (a.details, a) match {
       case (_: Audio, audioAsset: Asset) =>
-
         val file = new File(context.getCacheDir, s"${audioAsset.id.str}.m4a")
         Signal.future((if (!file.exists()) {
           file.createNewFile()
@@ -187,6 +186,7 @@ class AssetsController(implicit context: Context, inj: Injector, ec: EventContex
           asset.details match {
             case _: Video =>
               context.startActivity(getOpenFileIntent(externalFileSharing.getUriForFile(file), asset.mime.orDefault.str))
+              openVideoProgress ! false
             case _ =>
               showOpenFileDialog(externalFileSharing.getUriForFile(file), asset)
           }

@@ -36,15 +36,23 @@ import scala.concurrent.duration._
 class MessagesContentUpdater(messagesStorage: MessagesStorage,
                              convs:           ConversationStorage,
                              deletions:       MsgDeletionStorage,
+                             buttonsStorage:  ButtonsStorage,
                              prefs:           GlobalPreferences) extends DerivedLogTag {
-
   import Threading.Implicits.Background
 
   def getMessage(msgId: MessageId) = messagesStorage.getMessage(msgId)
 
-  def deleteMessage(msg: MessageData) = messagesStorage.delete(msg)
+  def deleteMessage(msg: MessageData) = for {
+    _ <- messagesStorage.delete(msg)
+   _  <- if (msg.msgType == Message.Type.COMPOSITE) buttonsStorage.deleteAllForMessage(msg.id)
+         else Future.successful(())
+  } yield ()
 
-  def deleteMessagesForConversation(convId: ConvId): Future[Unit] = messagesStorage.deleteAll(convId)
+  def deleteMessagesForConversation(convId: ConvId): Future[Unit] = for {
+    msgIds <- messagesStorage.findMessageIds(convId)
+    _      <- messagesStorage.deleteAll(convId)
+    _      <- Future.sequence(msgIds.map(buttonsStorage.deleteAllForMessage))
+  } yield ()
 
   def updateMessage(id: MessageId)(updater: MessageData => MessageData): Future[Option[MessageData]] = messagesStorage.update(id, updater) map {
     case Some((msg, updated)) if msg != updated =>
@@ -54,13 +62,30 @@ class MessagesContentUpdater(messagesStorage: MessagesStorage,
       None
   }
 
+  def updateButtonConfirmations(confirmations: Map[MessageId, Option[ButtonId]]): Future[Unit] =
+    Future.sequence(confirmations.map {
+      case (msgId, confirmedId) =>
+        for {
+          buttons <- buttonsStorage.findByMessage(msgId)
+          _       <- buttonsStorage.updateAll2(buttons.map(_.id), {
+                       case b if confirmedId.contains(b.buttonId) => b.copy(state = ButtonData.ButtonConfirmed)
+                       case b                                     => b.copy(state = ButtonData.ButtonNotClicked)
+                     })
+        } yield ()
+    }).map(_ => ())
+
   // removes messages and records deletion
   // this is used when user deletes a message manually (on local or remote device)
-  def deleteOnUserRequest(ids: Seq[MessageId]) =
-    deletions.insertAll(ids.map(id => MsgDeletion(id, now(clock)))) flatMap { _ =>
-      messagesStorage.removeAll(ids)
-    }
+  def deleteOnUserRequest(ids: Seq[MessageId]) = for {
+    _ <- deletions.insertAll(ids.map(id => MsgDeletion(id, now(clock))))
+    _ <- messagesStorage.removeAll(ids)
+    _ <- Future.sequence(ids.map(buttonsStorage.deleteAllForMessage))
+  } yield ()
 
+  def addButtons(buttons: Seq[ButtonData]): Future[Unit] = {
+    val newButtons = buttons.map(b => b.id -> b).toMap
+    buttonsStorage.updateOrCreateAll2(newButtons.keys, { (id, _) => newButtons(id) }).map(_ => ())
+  }
   /**
     * @param exp ConvExpiry takes precedence over one-time expiry (exp), which takes precedence over the MessageExpiry
     */
@@ -76,14 +101,18 @@ class MessagesContentUpdater(messagesStorage: MessagesStorage,
           }
         else Future.successful(None)
 
-      for {
+      (for {
         time <- remoteTimeAfterLast(msg.convId) //TODO: can we find a way to save this only on the localTime of the message?
         exp  <- expiration
         m = returning(msg.copy(state = state, time = time, localTime = localTime, ephemeral = exp)) { m =>
           verbose(l"addLocalMessage: $m, exp: $exp")
         }
         res <- messagesStorage.addMessage(m)
-      } yield res
+      } yield res).recoverWith {
+          case exception: Exception =>
+            error(l"Error while adding local message: $exception")
+            Future.failed(exception)
+      }
     }
 
   def addLocalSentMessage(msg: MessageData, time: Option[RemoteInstant] = None) = Serialized.future("add local message", msg.convId) {

@@ -16,7 +16,9 @@ object BadRequest : NetworkFailure()
 object Unauthorized : NetworkFailure()
 object Forbidden : NetworkFailure()
 object NotFound : NetworkFailure()
+object Cancelled : NetworkFailure()
 object InternalServerError : NetworkFailure()
+object Conflict : NetworkFailure()
 
 object EmptyResponseBody : NetworkFailure()
 
@@ -27,7 +29,5 @@ object DatabaseError : DatabaseFailure()
 //TODO: Improve to a more sufficient error propagation for Flow "data flows"
 data class GenericUseCaseError(val throwable: Throwable) : Failure()
 
-/** * Extend this class for feature specific failures.*/
+/** * Extend this class for UseCase specific failures.*/
 abstract class FeatureFailure : Failure()
-
-sealed class HandleValidationState : FeatureFailure()

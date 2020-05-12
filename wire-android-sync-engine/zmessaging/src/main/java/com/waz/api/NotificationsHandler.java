@@ -22,21 +22,19 @@ public interface NotificationsHandler {
     enum NotificationType {
         CONNECT_REQUEST,
         CONNECT_ACCEPTED,
-        CONTACT_JOIN,
         IMAGE_ASSET,
         ANY_ASSET,
         VIDEO_ASSET,
         AUDIO_ASSET,
         TEXT,
-        MEMBER_JOIN,
-        MEMBER_LEAVE,
         RENAME,
         KNOCK,
         MISSED_CALL,
         LIKE,
         LOCATION,
         MESSAGE_SENDING_FAILED,
-        CONVERSATION_DELETED;
+        CONVERSATION_DELETED,
+        COMPOSITE;
 
         public enum LikedContent {
             TEXT_OR_URL, // the text or URL is contained in #getMessage in this case

@@ -20,15 +20,15 @@ package com.waz.utils.wrappers
 import java.io.Closeable
 
 import android.content.ContentValues
-import android.database.sqlite.{SQLiteDatabase, SQLiteSession}
+import android.database.sqlite.SQLiteDatabase
+import androidx.sqlite.db.{SupportSQLiteDatabase, SupportSQLiteQueryBuilder}
+import com.waz.log.BasicLogging.LogTag.DerivedLogTag
 
 import scala.language.implicitConversions
 
 trait DB extends Closeable {
 
   // see SQLLiteClosable for comments how these should be used
-
-  def acquireReference(): Unit
 
   def releaseReference(): Unit
 
@@ -57,7 +57,7 @@ trait DB extends Closeable {
             orderBy: String,
             limit: String = null): DBCursor
 
-  def rawQuery(sql: String, selectionArgs: Array[String]): DBCursor
+  def rawQuery(sql: String): DBCursor
 
   def delete(table: String, whereClause: String, whereArgs: Array[String]): Int
 
@@ -81,29 +81,56 @@ trait DB extends Closeable {
 
   def disableWriteAheadLogging(): Unit
 
-  def getThreadSession: DBSession
-
   def insertOrIgnore(tableName: String, values: DBContentValues): Unit
 
   def insertOrReplace(tableName: String, values: DBContentValues): Unit
 }
 
-class SQLiteDBWrapper(val db: SQLiteDatabase) extends DB {
-  override def acquireReference() = db.acquireReference()
+class SQLiteDBWrapper(val db: SupportSQLiteDatabase) extends DB with DerivedLogTag {
 
-  override def releaseReference() = db.releaseReference()
+  import com.waz.log.LogSE._
 
-  override def beginTransaction() = db.beginTransaction()
+  override def beginTransaction(): Unit =
+    try { db.beginTransaction() }
+    catch { case ex: Throwable =>
+      error(l"Error on beginTransaction ", ex)
+      throw ex
+    }
 
-  override def beginTransactionNonExclusive() = db.beginTransactionNonExclusive()
+  override def beginTransactionNonExclusive(): Unit =
+    try { db.beginTransactionNonExclusive() }
+    catch { case ex: Throwable =>
+      error(l"Error on beginTransactionNonExclusive ", ex)
+      throw ex
+    }
 
-  override def endTransaction() = db.endTransaction()
+  override def endTransaction(): Unit =
+    try { db.endTransaction() }
+    catch { case ex: Throwable =>
+      error(l"Error on endTransaction ", ex)
+      throw ex
+    }
 
-  override def setTransactionSuccessful() = db.setTransactionSuccessful()
+  override def setTransactionSuccessful(): Unit =
+    try { db.setTransactionSuccessful() }
+    catch { case ex: Throwable =>
+      error(l"Error on setTransactionSuccessful ", ex)
+      throw ex
+    }
 
-  override def inTransaction = db.inTransaction
+  override def inTransaction: Boolean =
+    try { db.inTransaction }
+    catch { case ex: Throwable =>
+      error(l"Error on inTransaction ", ex)
+      throw ex
+    }
 
-  def compileStatement(sql: String) = DBStatement(db.compileStatement(sql))
+  def compileStatement(sql: String): DBStatement =
+    try { DBStatement(db.compileStatement(sql)) }
+    catch { case ex: Throwable =>
+      error(l"Error on compileStatement. sql: $sql ", ex)
+      throw ex
+    }
 
   override def query(table: String,
                      columns: Array[String],
@@ -112,42 +139,106 @@ class SQLiteDBWrapper(val db: SQLiteDatabase) extends DB {
                      groupBy: String,
                      having: String,
                      orderBy: String,
-                     limit: String = null) = db.query(table, columns, selection, selectionArgs, groupBy, having, orderBy, limit)
-
-  override def rawQuery(sql: String, selectionArgs: Array[String]) = db.rawQuery(sql, selectionArgs)
-
-  override def delete(table: String, whereClause: String, whereArgs: Array[String]) = db.delete(table, whereClause, whereArgs)
-
-  override def update(table: String, values: DBContentValues, whereClause: String, whereArgs: Array[String]) =
-    db.update(table, values, whereClause, whereArgs)
-
-  override def execSQL(sql: String) = db.execSQL(sql)
-
-  override def execSQL(sql: String, bindArgs: Array[AnyRef]) = db.execSQL(sql, bindArgs)
-
-  override def isReadOnly = db.isReadOnly
-
-  override def isInMemoryDatabase = false
-
-  override def isOpen = db.isOpen
-
-  override def needUpgrade(newVersion: Int) = db.needUpgrade(newVersion)
-
-  override def getPath = db.getPath
-
-  override def enableWriteAheadLogging() = db.enableWriteAheadLogging()
-
-  override def disableWriteAheadLogging() = db.disableWriteAheadLogging()
-
-  override def getThreadSession = {
-    val method = classOf[SQLiteDatabase].getDeclaredMethod("getThreadSession")
-    method.setAccessible(true)
-    method.invoke(db).asInstanceOf[SQLiteSession]
+                     limit: String = null): DBCursor = {
+    val supportQuery = SupportSQLiteQueryBuilder.builder(table)
+      .columns(columns)
+      .selection(selection, selectionArgs.asInstanceOf[Array[AnyRef]])
+      .groupBy(groupBy)
+      .having(having)
+      .orderBy(orderBy)
+      .limit(limit)
+      .create()
+    try { db.query(supportQuery) }
+    catch { case ex: Throwable =>
+      error(l"Error in supportQuery $supportQuery ", ex)
+      throw ex
+    }
   }
 
-  override def insertOrIgnore(tableName: String, values: DBContentValues): Unit = db.insertWithOnConflict(tableName, null, values, SQLiteDatabase.CONFLICT_IGNORE)
+  override def rawQuery(sql: String): DBCursor =
+    try{ db.query(sql) }
+    catch { case ex: Throwable =>
+      error(l"Error in query $sql ", ex)
+      throw ex
+    }
 
-  override def insertOrReplace(tableName: String, values: DBContentValues): Unit = db.insertWithOnConflict(tableName, null, values, SQLiteDatabase.CONFLICT_REPLACE)
+  override def delete(table: String, whereClause: String, whereArgs: Array[String]): Int =
+    try { db.delete(table, whereClause, whereArgs.asInstanceOf[Array[AnyRef]]) }
+    catch { case ex: Throwable =>
+      error(l"Error in delete table $table ", ex)
+      throw ex
+    }
+
+  override def update(table: String, values: DBContentValues, whereClause: String, whereArgs: Array[String]): Int =
+    try { db.update(table, SQLiteDatabase.CONFLICT_REPLACE, values, whereClause, whereArgs.asInstanceOf[Array[AnyRef]]) }
+    catch { case ex: Throwable =>
+      error(l"Error in update table $table ", ex)
+      throw ex
+    }
+
+  override def execSQL(sql: String): Unit =
+    try { db.execSQL(sql) }
+    catch { case ex: Throwable =>
+      error(l"Error in execSQL: $sql", ex)
+      throw ex
+    }
+
+  override def execSQL(sql: String, bindArgs: Array[AnyRef]): Unit =
+    try { db.execSQL(sql, bindArgs) }
+    catch { case ex: Throwable =>
+      error(l"Error in execSQL: $sql", ex)
+      throw ex
+    }
+
+  override def isReadOnly: Boolean = db.isReadOnly
+
+  override def isInMemoryDatabase: Boolean = false
+
+  override def isOpen: Boolean = db.isOpen
+
+  override def needUpgrade(newVersion: Int): Boolean =
+    try { db.needUpgrade(newVersion) }
+    catch { case ex: Throwable =>
+      error(l"Error on needUpgrade. NewVersion: $newVersion ", ex)
+      throw ex
+    }
+
+  override def getPath: String = db.getPath
+
+  override def enableWriteAheadLogging(): Boolean =
+    try { db.enableWriteAheadLogging() }
+    catch { case ex: Throwable =>
+      error(l"Error in enableWriteAheadLogging ", ex)
+      throw ex
+    }
+
+  override def disableWriteAheadLogging(): Unit =
+    try { db.disableWriteAheadLogging() }
+    catch { case ex: Throwable =>
+      error(l"Error in disableWriteAheadLogging ", ex)
+      throw ex
+    }
+
+  override def insertOrIgnore(tableName: String, values: DBContentValues): Unit =
+    try { db.insert(tableName, SQLiteDatabase.CONFLICT_IGNORE, values) }
+    catch { case ex: Throwable =>
+      error(l"Error in insertOrIgnore table: $tableName", ex)
+      throw ex
+    }
+
+  override def insertOrReplace(tableName: String, values: DBContentValues): Unit =
+    try { db.insert(tableName, SQLiteDatabase.CONFLICT_REPLACE, values) }
+    catch { case ex: Throwable =>
+      error(l"Error in insertOrReplace table: $tableName", ex)
+      throw ex
+    }
+
+  override def releaseReference(): Unit =
+    try { db.close() }
+    catch { case ex: Throwable =>
+      error(l"Error while closing db ", ex)
+      throw ex
+    }
 }
 
 trait DBUtil {
@@ -165,12 +256,12 @@ object DB {
 
   def ContentValues(): DBContentValues = util.ContentValues()
 
-  def apply(db: SQLiteDatabase): DB = new SQLiteDBWrapper(db)
+  def apply(db: SupportSQLiteDatabase): DB = new SQLiteDBWrapper(db)
 
-  implicit def fromAndroid(db: SQLiteDatabase): DB = apply(db)
+  implicit def fromAndroid(db: SupportSQLiteDatabase): DB = apply(db)
 
-  implicit def toAndroid(db: DB): SQLiteDatabase = db match {
+  implicit def toAndroid(db: DB): SupportSQLiteDatabase = db match {
     case wrapper: SQLiteDBWrapper => wrapper.db
-    case _ => throw new IllegalArgumentException(s"Expected Android DB, but tried to unwrap: ${db.getClass.getName}")
+    case _                        => throw new IllegalArgumentException(s"Expected Android DB, but tried to unwrap: ${db.getClass.getName}")
   }
 }

@@ -31,6 +31,7 @@ public enum SyncCommand {
     SyncConversation("sync-conv"),
     SyncConvLink("sync-conv-link"),
     SyncSearchQuery("sync-search"),
+    SyncSearchResults("sync-search-results"),
     SyncProperties("sync-properties"),
     ExactMatchHandle("exact-match"),
     PostConv("post-conv"),
@@ -46,6 +47,7 @@ public enum SyncCommand {
     PostSelfName("post-name"),
     PostSelfAccentColor("post-accent-color"),
     PostAvailability("post-availability"),
+    PostButtonAction("post-button-action"),
     PostMessage("post-message"),
     PostDeleted("post-deleted"),
     PostRecalled("post-recalled"),
@@ -56,7 +58,6 @@ public enum SyncCommand {
     SyncRichMedia("sync-rich-media"),
     RegisterPushToken("register-push-token"),
     PostSelf("post-self"),
-    PostAddressBook("post-addressbook"),
     SyncSelfClients("sync-clients"),   // sync user clients, register current client and update prekeys when needed
     SyncSelfPermissions("sync-self-permissions"),
     SyncClients("sync-user-clients"),

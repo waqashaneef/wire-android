@@ -17,18 +17,14 @@
  */
 package com.waz
 
-import java.nio.ByteBuffer
-import java.nio.charset.Charset
-
 import com.google.protobuf.nano.{CodedInputByteBufferNano, MessageNano}
 import com.waz.model.nano.Messages
 import com.waz.utils.crypto.AESUtils
 import com.waz.utils.{JsonDecoder, JsonEncoder, returning}
-import io.circe.{Decoder, Encoder}
 import org.json.JSONObject
 
-import scala.language.implicitConversions
 import scala.concurrent.duration.FiniteDuration
+import scala.language.implicitConversions
 
 package object model {
 
@@ -91,28 +87,30 @@ package object model {
     }
 
     def content(msg: GenericMessage) = msg.getContentCase match {
-      case GM.ASSET_FIELD_NUMBER          => msg.getAsset
-      case GM.CALLING_FIELD_NUMBER        => msg.getCalling
-      case GM.CLEARED_FIELD_NUMBER        => msg.getCleared
-      case GM.CLIENTACTION_FIELD_NUMBER   => ClientAction(msg.getClientAction)
-      case GM.DELETED_FIELD_NUMBER        => msg.getDeleted
-      case GM.EDITED_FIELD_NUMBER         => msg.getEdited
-      case GM.EXTERNAL_FIELD_NUMBER       => msg.getExternal
-      case GM.HIDDEN_FIELD_NUMBER         => msg.getHidden
-      case GM.IMAGE_FIELD_NUMBER          => msg.getImage
-      case GM.KNOCK_FIELD_NUMBER          => msg.getKnock
-      case GM.LASTREAD_FIELD_NUMBER       => msg.getLastRead
-      case GM.REACTION_FIELD_NUMBER       => msg.getReaction
-      case GM.TEXT_FIELD_NUMBER           => msg.getText
-      case GM.LOCATION_FIELD_NUMBER       => msg.getLocation
-      case GM.CONFIRMATION_FIELD_NUMBER   => msg.getConfirmation
-      case GM.EPHEMERAL_FIELD_NUMBER      => msg.getEphemeral
-      case GM.AVAILABILITY_FIELD_NUMBER   => msg.getAvailability
-      case _                              => Unknown
+      case GM.ASSET_FIELD_NUMBER                    => msg.getAsset
+      case GM.CALLING_FIELD_NUMBER                  => msg.getCalling
+      case GM.CLEARED_FIELD_NUMBER                  => msg.getCleared
+      case GM.CLIENTACTION_FIELD_NUMBER             => ClientAction(msg.getClientAction)
+      case GM.DELETED_FIELD_NUMBER                  => msg.getDeleted
+      case GM.EDITED_FIELD_NUMBER                   => msg.getEdited
+      case GM.EXTERNAL_FIELD_NUMBER                 => msg.getExternal
+      case GM.HIDDEN_FIELD_NUMBER                   => msg.getHidden
+      case GM.IMAGE_FIELD_NUMBER                    => msg.getImage
+      case GM.KNOCK_FIELD_NUMBER                    => msg.getKnock
+      case GM.LASTREAD_FIELD_NUMBER                 => msg.getLastRead
+      case GM.REACTION_FIELD_NUMBER                 => msg.getReaction
+      case GM.TEXT_FIELD_NUMBER                     => msg.getText
+      case GM.LOCATION_FIELD_NUMBER                 => msg.getLocation
+      case GM.CONFIRMATION_FIELD_NUMBER             => msg.getConfirmation
+      case GM.EPHEMERAL_FIELD_NUMBER                => msg.getEphemeral
+      case GM.AVAILABILITY_FIELD_NUMBER             => msg.getAvailability
+      case GM.COMPOSITE_FIELD_NUMBER                => msg.getComposite
+      case GM.BUTTONACTION_FIELD_NUMBER             => msg.getButtonAction
+      case GM.BUTTONACTIONCONFIRMATION_FIELD_NUMBER => msg.getButtonActionConfirmation
+      case _                                        => Unknown
     }
 
     object TextMessage {
-      import scala.concurrent.duration.DurationInt
 
       def apply(text: String): GenericMessage = GenericMessage(Uid(), Text(text, Nil, Nil, expectsReadConfirmation = false))
 

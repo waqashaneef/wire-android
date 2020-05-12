@@ -61,6 +61,10 @@ trait ConversationsUiService {
                        content: ContentForUpload,
                        confirmation: WifiWarningConfirmation = DefaultConfirmation,
                        exp: Option[Option[FiniteDuration]] = None): Future[Some[MessageData]]
+  def sendAssetMessages(convId: ConvId,
+                        contents: Seq[ContentForUpload],
+                        confirmation: WifiWarningConfirmation = DefaultConfirmation,
+                        exp: Option[Option[FiniteDuration]] = None): Future[Unit]
 
   def sendLocationMessage(convId: ConvId, l: api.MessageContent.Location): Future[Some[MessageData]] //TODO remove use of MessageContent.Location
 
@@ -175,6 +179,34 @@ class ConversationsUiServiceImpl(selfUserId:        UserId,
     } yield Some(message)
   }
 
+  override def sendAssetMessages(convId:       ConvId,
+                                 contents:     Seq[ContentForUpload],
+                                 confirmation: WifiWarningConfirmation = DefaultConfirmation,
+                                 exp:          Option[Option[FiniteDuration]] = None): Future[Unit] = {
+    val contentMap = contents.map { c => MessageId() -> c }.toMap
+    for {
+      retention <- messages.retentionPolicy2ById(convId)
+      rr        <- readReceiptSettings(convId)
+      rawAssets <- Future.traverse(contentMap) { case (messageId, content) =>
+                     assets.createAndSaveUploadAsset(content, AES_CBC_Encryption.random, public = false, retention, Some(messageId))
+                           .map(asset => messageId -> asset)
+                   }
+      assetMap  =  rawAssets.toMap
+      msgs      <- Future.traverse(assetMap) { case (messageId, rawAsset) =>
+                     messages.addAssetMessage(convId, messageId, rawAsset, rr, exp)
+                   }
+      _         <- updateLastRead(msgs.toList.maxBy(_.time))
+      msgMap    =  msgs.toIdMap
+      _         <- Future.traverse(assetMap) { case (messageId, rawAsset) =>
+                     val message = msgMap(messageId)
+                     checkSize(convId, rawAsset, message, confirmation).flatMap {
+                       case true  => sync.postMessage(message.id, convId, message.editTime)
+                       case false => Future.successful(())
+                     }
+                   }
+    } yield ()
+  }
+
   override def sendLocationMessage(convId: ConvId, l: api.MessageContent.Location): Future[Some[MessageData]] = {
     for {
       rr  <- readReceiptSettings(convId)
@@ -184,8 +216,7 @@ class ConversationsUiServiceImpl(selfUserId:        UserId,
     } yield Some(msg)
   }
 
-  override def updateMessage(convId: ConvId, id: MessageId, text: String, mentions: Seq[Mention] = Nil): Future[Option[MessageData]] = {
-    verbose(l"updateMessage($convId, $id, $mentions")
+  override def updateMessage(convId: ConvId, id: MessageId, text: String, mentions: Seq[Mention] = Nil): Future[Option[MessageData]] =
     messagesStorage.update(id, {
       case m if m.convId == convId && m.userId == selfUserId =>
         val (tpe, ct) = MessageData.messageContent(text, mentions, weblinkEnabled = true)
@@ -204,7 +235,6 @@ class ConversationsUiServiceImpl(selfUserId:        UserId,
       case Some((_, m)) => sync.postMessage(m.id, m.convId, m.editTime) map { _ => Some(m) } // using PostMessage sync request to use the same logic for failures and retrying
       case None => Future successful None
     }
-  }
 
   override def deleteMessage(convId: ConvId, id: MessageId): Future[Unit] = for {
     _ <- messagesContent.deleteOnUserRequest(Seq(id))
@@ -251,10 +281,13 @@ class ConversationsUiServiceImpl(selfUserId:        UserId,
 
   override def addConversationMembers(conv: ConvId, users: Set[UserId], defaultRole: ConversationRole): Future[Option[SyncId]] =
     (for {
-      true   <- canModifyMembers(conv)
-      added  <- members.updateOrCreateAll(conv, users.map(_ -> defaultRole).toMap) if added.nonEmpty
-      _      <- messages.addMemberJoinMessage(conv, selfUserId, added.map(_.userId))
-      syncId <- sync.postConversationMemberJoin(conv, added.map(_.userId), defaultRole)
+      true      <- canModifyMembers(conv)
+      contacted <- members.getByUsers(users)
+      toSync    =  users -- contacted.map(_.userId).toSet
+      _         <- sync.syncUsers(toSync) // data of users found through Search UI is not yet in db
+      added     <- members.updateOrCreateAll(conv, users.map(_ -> defaultRole).toMap) if added.nonEmpty
+      _         <- messages.addMemberJoinMessage(conv, selfUserId, added.map(_.userId))
+      syncId    <- sync.postConversationMemberJoin(conv, added.map(_.userId), defaultRole)
     } yield Option(syncId))
       .recover {
         case NonFatal(e) =>
@@ -264,10 +297,13 @@ class ConversationsUiServiceImpl(selfUserId:        UserId,
 
   override def removeConversationMember(conv: ConvId, user: UserId) = {
     (for {
-      true    <- canModifyMembers(conv)
-      Some(_) <- members.remove(conv, user)
-      _       <- messages.addMemberLeaveMessage(conv, selfUserId, user)
-      syncId  <- sync.postConversationMemberLeave(conv, user)
+      true     <- canModifyMembers(conv)
+      Some(_)  <- members.remove(conv, user)
+      toDelete <- if (user != selfUserId) members.getByUsers(Set(user)).map(_.isEmpty)
+                  else Future.successful(false)
+      _        <- if (toDelete) usersStorage.remove(user) else Future.successful(())
+      _        <- messages.addMemberLeaveMessage(conv, selfUserId, user)
+      syncId   <- sync.postConversationMemberLeave(conv, user)
     } yield Option(syncId))
       .recover {
         case NonFatal(e) =>
@@ -443,7 +479,6 @@ class ConversationsUiServiceImpl(selfUserId:        UserId,
     }
 
   override def setLastRead(convId: ConvId, msg: MessageData): Future[Option[ConversationData]] = {
-
     def sendReadReceipts(from: RemoteInstant, to: RemoteInstant, readReceiptSettings: ReadReceiptSettings): Future[Seq[SyncId]] = {
       shouldSendReadReceipts(convId, readReceiptSettings).flatMap {
         case true =>

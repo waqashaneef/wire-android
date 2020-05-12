@@ -23,11 +23,11 @@ import android.Manifest.permission.{CAMERA, READ_EXTERNAL_STORAGE, RECORD_AUDIO,
 import android.content.Intent
 import android.os.Bundle
 import android.provider.MediaStore
-import androidx.annotation.Nullable
 import android.text.TextUtils
 import android.view._
 import android.view.animation.Animation
 import android.widget.{AbsListView, FrameLayout, TextView}
+import androidx.annotation.Nullable
 import androidx.appcompat.widget.{ActionMenuView, Toolbar}
 import androidx.recyclerview.widget.{LinearLayoutManager, RecyclerView}
 import com.waz.api.ErrorType
@@ -35,8 +35,8 @@ import com.waz.content.{GlobalPreferences, UsersStorage}
 import com.waz.model.ConversationData.ConversationType
 import com.waz.model.{AccentColor, MessageContent => _, _}
 import com.waz.permissions.PermissionsService
+import com.waz.service.ZMessaging
 import com.waz.service.assets.{Content, ContentForUpload}
-import com.waz.service.{TeamSizeThreshold, ZMessaging}
 import com.waz.service.call.CallingService
 import com.waz.threading.{CancellableFuture, Threading}
 import com.waz.utils.events.{EventStreamWithAuxSignal, Signal}
@@ -61,7 +61,7 @@ import com.waz.zclient.conversation.{ConversationController, ReplyContent, Reply
 import com.waz.zclient.cursor._
 import com.waz.zclient.drawing.DrawingFragment.Sketch
 import com.waz.zclient.log.LogUI._
-import com.waz.zclient.messages.{MessagesController, MessagesListView}
+import com.waz.zclient.messages.{MessagesController, MessagesListView, UsersController}
 import com.waz.zclient.pages.extendedcursor.ExtendedCursorContainer
 import com.waz.zclient.pages.extendedcursor.emoji.EmojiKeyboardLayout
 import com.waz.zclient.pages.extendedcursor.image.CursorImagesLayout
@@ -92,6 +92,7 @@ class ConversationFragment extends FragmentHelper {
   private lazy val zms = inject[Signal[ZMessaging]]
 
   private lazy val convController         = inject[ConversationController]
+  private lazy val usersController        = inject[UsersController]
   private lazy val messagesController     = inject[MessagesController]
   private lazy val screenController       = inject[ScreenController]
   private lazy val collectionController   = inject[CollectionController]
@@ -161,8 +162,6 @@ class ConversationFragment extends FragmentHelper {
   private lazy val mentionsList = view[RecyclerView](R.id.mentions_list)
   private lazy val replyView = view[ReplyView](R.id.reply_view)
 
-  private var hideUserStatus = false
-
   private def showMentionsList(visible: Boolean): Unit = {
     mentionsList.foreach(_.setVisible(visible))
     messagesOpacity.foreach(_.setVisible(visible))
@@ -205,10 +204,6 @@ class ConversationFragment extends FragmentHelper {
 
     convController.currentConvName.onUi { updateTitle }
 
-    TeamSizeThreshold.shouldHideStatus(accountsController.teamId, usersStorage).foreach { hide =>
-      hideUserStatus = hide
-    }(Threading.Ui)
-
     cancelPreviewOnChange.onUi {
       case (change, Some(true)) if !change.noChange => imagePreviewCallback.onCancelPreview()
       case _ =>
@@ -217,7 +212,7 @@ class ConversationFragment extends FragmentHelper {
     (for {
       (convId, isConvActive) <- convController.currentConv.map(c => (c.id, c.isActive))
       isGroup                <- convController.groupConversation(convId)
-      participantsNumber     <- Signal.future(convController.participantsIds(convId).map(_.size))
+      participantsNumber     <- convController.convMembers(convId).map(_.size)
       selfUserId             <- zms.map(_.selfUserId)
       call                   <- callController.currentCallOpt
       isCallActive           = call.exists(_.convId == convId) && call.exists(_.selfParticipant.userId == selfUserId)
@@ -420,7 +415,7 @@ class ConversationFragment extends FragmentHelper {
 
       subs += Signal(v.mentionSearchResults, accountsController.teamId, inject[ThemeController].currentTheme).onUi {
         case (data, teamId, theme) =>
-          mentionCandidatesAdapter.setData(data, teamId, theme, hideUserStatus)
+          mentionCandidatesAdapter.setData(data, teamId, theme)
           mentionsList.foreach(_.scrollToPosition(data.size - 1))
       }
 
@@ -793,8 +788,8 @@ class ConversationFragment extends FragmentHelper {
 
       (for {
         self <- inject[UserAccountsController].currentUser.head
-        members <- convController.loadMembers(convId)
-        unverifiedUsers = members.filter { !_.isVerified }
+        members <- convController.convMembers(convId).head
+        unverifiedUsers <- usersController.users(members.keys).map(_.filter(!_.isVerified)).head
         unverifiedDevices <-
           if (unverifiedUsers.size == 1) Future.sequence(unverifiedUsers.map(u => convController.loadClients(u.id).map(_.filter(!_.isVerified)))).map(_.flatten.size)
           else Future.successful(0) // in other cases we don't need this number

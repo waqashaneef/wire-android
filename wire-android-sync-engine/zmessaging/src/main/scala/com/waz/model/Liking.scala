@@ -74,7 +74,7 @@ object Liking {
     }
 
     def findMaxTime(implicit db: DB) =
-      iteratingWithReader(InstantReader)(db.rawQuery(s"SELECT MAX(${Timestamp.name}) FROM ${table.name}", null))
+      iteratingWithReader(InstantReader)(db.rawQuery(s"SELECT MAX(${Timestamp.name}) FROM ${table.name}"))
         .acquire(t => if (t.hasNext) t.next else RemoteInstant.Epoch)
 
     object InstantReader extends Reader[RemoteInstant] {
@@ -93,7 +93,7 @@ object Liking {
 
   import com.waz.utils.JsonDecoder._
 
-  implicit lazy val ContactDataDecoder: JsonDecoder[Liking] = new JsonDecoder[Liking] {
+  implicit lazy val LikingDecoder: JsonDecoder[Liking] = new JsonDecoder[Liking] {
     override def apply(implicit js: JSONObject): Liking = Liking(
       decodeId[MessageId]('message),
       decodeId[UserId]('user),

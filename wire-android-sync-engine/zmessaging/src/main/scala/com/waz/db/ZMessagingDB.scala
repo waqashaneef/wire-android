@@ -18,13 +18,14 @@
 package com.waz.db
 
 import android.content.Context
-import android.database.sqlite.SQLiteDatabase
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.waz.api.Message
 import com.waz.content.PropertiesDao
 import com.waz.db.ZMessagingDB.{DbVersion, daos, migrations}
 import com.waz.db.migrate._
 import com.waz.model.AddressBook.ContactHashesDao
 import com.waz.model.AssetData.AssetDataDao
+import com.waz.model.ButtonData.ButtonDataDao
 import com.waz.model.Contact.{ContactsDao, ContactsOnWireDao, EmailAddressesDao, PhoneNumbersDao}
 import com.waz.model.ConversationData.ConversationDataDao
 import com.waz.model.ConversationFolderData.ConversationFolderDataDao
@@ -40,25 +41,23 @@ import com.waz.model.MsgDeletion.MsgDeletionDao
 import com.waz.model.NotificationData.NotificationDataDao
 import com.waz.model.PushNotificationEvents.PushNotificationEventsDao
 import com.waz.model.ReadReceipt.ReadReceiptDao
-import com.waz.model.TeamData.TeamDataDao
 import com.waz.model.UserData.UserDataDao
 import com.waz.model._
 import com.waz.model.otr.UserClients.UserClientsDao
 import com.waz.model.sync.SyncJob.SyncJobDao
-import com.waz.service.assets.AssetStorageImpl.AssetDao
-import com.waz.service.assets.DownloadAssetStorage.DownloadAssetDao
-import com.waz.service.assets.UploadAssetStorage.UploadAssetDao
 import com.waz.repository.FCMNotificationStatsRepository.FCMNotificationStatsDao
 import com.waz.repository.FCMNotificationsRepository.FCMNotificationsDao
 import com.waz.service.assets
-import com.waz.service.assets.{AESKeyBytes, AES_CBC_Encryption, Asset, AudioDetails, BlobDetails, ImageDetails, Loudness, NoEncryption, VideoDetails}
+import com.waz.service.assets.AssetStorageImpl.AssetDao
+import com.waz.service.assets.DownloadAssetStorage.DownloadAssetDao
+import com.waz.service.assets.UploadAssetStorage.UploadAssetDao
 import com.waz.service.tracking.TrackingService
 
 import scala.util.{Success, Try}
 
-class ZMessagingDB(context: Context, dbName: String, tracking: TrackingService) extends DaoDB(context.getApplicationContext, dbName, null, DbVersion, daos, migrations, tracking) {
+class ZMessagingDB(context: Context, dbName: String, tracking: TrackingService) extends DaoDB(context.getApplicationContext, dbName, DbVersion, daos, migrations, tracking) {
 
-  override def onUpgrade(db: SQLiteDatabase, from: Int, to: Int): Unit = {
+  override def onUpgrade(db: SupportSQLiteDatabase, from: Int, to: Int): Unit = {
     if (from < 60) {
       dropAllTables(db)
       onCreate(db)
@@ -73,10 +72,10 @@ object ZMessagingDB {
     UserDataDao, AssetDataDao, ConversationDataDao, ConversationMemberDataDao,
     MessageDataDao, KeyValueDataDao, SyncJobDao, ErrorDataDao, NotificationDataDao,
     ContactHashesDao, ContactsOnWireDao, UserClientsDao, LikingDao, ContactsDao, EmailAddressesDao,
-    PhoneNumbersDao, MsgDeletionDao, EditHistoryDao, MessageContentIndexDao,
+    PhoneNumbersDao, MsgDeletionDao, EditHistoryDao,
     PushNotificationEventsDao, ReadReceiptDao, PropertiesDao, UploadAssetDao, DownloadAssetDao,
     AssetDao, FCMNotificationsDao, FCMNotificationStatsDao, FolderDataDao, ConversationFolderDataDao,
-    ConversationRoleActionDao
+    ConversationRoleActionDao, ButtonDataDao, MessageContentIndexDao
   )
 
   lazy val migrations = Seq(

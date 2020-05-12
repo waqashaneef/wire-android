@@ -17,6 +17,8 @@
  */
 package com.waz.service.call
 
+import java.net.InetSocketAddress
+
 import android.Manifest.permission.CAMERA
 import com.sun.jna.Pointer
 import com.waz.api.impl.ErrorResponse
@@ -63,7 +65,7 @@ class GlobalCallingService extends DerivedLogTag {
       GlobalCallProfile(profiles.flatMap(_.calls.map(c => (c._2.selfParticipant.userId, c._2.convId) -> c._2)).toMap)
     }
 
-  lazy val services: Signal[Set[(UserId, CallingServiceImpl)]] = ZMessaging.currentAccounts.zmsInstances.map(_.map(z => z.selfUserId -> z.calling))
+  private lazy val services: Signal[Set[(UserId, CallingServiceImpl)]] = ZMessaging.currentAccounts.zmsInstances.map(_.map(z => z.selfUserId -> z.calling))
 
   //If there is an active call in one or more of the logged in accounts, returns the account id for the one with the oldest call
   lazy val activeAccount: Signal[Option[UserId]] = globalCallProfile.map(_.activeCall.map(_.selfParticipant.userId))
@@ -173,10 +175,15 @@ class CallingServiceImpl(val accountId:       UserId,
   private implicit val dispatcher: SerialDispatchQueue = new SerialDispatchQueue(name = "CallingService")
 
   //need to ensure that flow manager and media manager are initialised for v3 (they are lazy values)
-  private val fm = flowManagerService.flowManager
+  flowManagerService.flowManager
   private var closingPromise = Option.empty[Promise[Unit]]
 
   private[call] val callProfile = Signal(CallProfile.Empty)
+
+  ZMessaging.currentGlobal.httpProxy.foreach { proxy =>
+     val proxyAddress = proxy.address().asInstanceOf[InetSocketAddress]
+     avs.setProxy(proxyAddress.getHostName, proxyAddress.getPort)
+  }
 
   callProfile(p => verbose(l"Call profile: ${p.calls}"))
 
@@ -387,9 +394,9 @@ class CallingServiceImpl(val accountId:       UserId,
         profile <- callProfile.head
         isGroup <- convsService.isGroupConversation(convId)
         vbr     <- userPrefs.preference(UserPreferences.VBREnabled).apply()
-        mems    <- members.getActiveUsers(conv.id)
+        convSize <- convsService.activeMembersData(conv.id).map(_.size).head
         callType =
-          if (mems.size > VideoCallMaxMembers) Avs.WCallType.ForcedAudio
+          if (convSize > VideoCallMaxMembers) Avs.WCallType.ForcedAudio
           else if (isVideo) Avs.WCallType.Video
           else Avs.WCallType.Normal
         convType = if (isGroup) Avs.WCallConvType.Group else Avs.WCallConvType.OneOnOne
