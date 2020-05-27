@@ -203,7 +203,7 @@ android {
         }
 
         debug {
-            testCoverageEnabled = true
+            testCoverageEnabled = false
             versionNameSuffix = " " + getDate()
             multiDexEnabled true
             manifestPlaceholders = [applicationVmSafeMode: "true",
