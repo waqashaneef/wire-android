@@ -26,6 +26,6 @@ fun Fragment.replaceFragment(frameId: Int, fragment: Fragment, addToBackStack: B
     (activity as AppCompatActivity).replaceFragment(frameId, fragment, addToBackStack)
 }
 
-fun Fragment.showKeyboard() = activity?.it.showKeyboard()
+fun Fragment.showKeyboard() = activity?.showKeyboard()
 
 fun Fragment.hideKeyboard() = activity?.hideKeyboard()
