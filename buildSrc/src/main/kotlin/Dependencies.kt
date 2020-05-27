@@ -166,8 +166,8 @@ object DevDependencies {
 }
 
 object LegacyDependencies {
-    const val SCALA_MAJOR_VERSION = "2.11"
-    const val SCALA_VERSION = SCALA_MAJOR_VERSION.plus(".12")
+    const val SCALA_MAJOR_VERSION = "2.12"
+    const val SCALA_VERSION = SCALA_MAJOR_VERSION.plus(".11")
 
     //build
     val scalaLibrary = "org.scala-lang:scala-library:$SCALA_VERSION"

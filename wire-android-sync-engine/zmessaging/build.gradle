@@ -59,17 +59,17 @@ repositories {
 }
 
 tasks.withType(JavaCompile) {
-    options.compilerArgs += ["-source", "1.7", "-target", "1.7", "-encoding", "UTF-8"]
+    options.compilerArgs += ["-encoding", "UTF-8"]
 }
 
 tasks.withType(ScalaCompile) {
-    scalaCompileOptions.additionalParameters = ["-feature", "-target:jvm-1.7", "-Xfuture", //"-Xfatal-warnings",
+    scalaCompileOptions.additionalParameters = ["-feature", "-Xfuture", //"-Xfatal-warnings",
                                                 "-deprecation", "-encoding", "UTF-8", "-Xmax-classfile-name", "128"]
 }
 
 def versions = [
-        okHttp : "3.10.0",
-        circe : "0.11.1",
+    okHttp: "3.10.0",
+    circe : "0.12.3",
 ]
 
 dependencies {
@@ -86,8 +86,12 @@ dependencies {
     // should match okhttp3's mockserver version (see test dependencies)
     implementation BuildDependencies.libPhoneNumber
     implementation "com.wire:cryptobox-android:1.1.2"
-    api "com.wire:generic-message-proto:1.24.2"
-    implementation "com.wire:backend-api-proto:2.3"
+    api("com.wire:generic-message-proto:1.24.2") {
+        exclude(group: "org.scala-lang", module: "scala-library")
+    }
+    implementation("com.wire:backend-api-proto:2.3") {
+        exclude(group: "org.scala-lang", module: "scala-library")
+    }
     implementation "io.circe:circe-core_${LegacyDependencies.SCALA_MAJOR_VERSION}:$versions.circe"
     implementation "io.circe:circe-generic_${LegacyDependencies.SCALA_MAJOR_VERSION}:$versions.circe"
     implementation "io.circe:circe-parser_${LegacyDependencies.SCALA_MAJOR_VERSION}:$versions.circe"
@@ -96,10 +100,10 @@ dependencies {
     implementation "com.github.joshjdevl.libsodiumjni:libsodium-jni-aar:2.0.2"
 
     //Provided dependencies
-    compileOnly "com.softwaremill.macwire:macros_${LegacyDependencies.SCALA_MAJOR_VERSION}:2.3.3"
-    compileOnly "com.softwaremill.macwire:macrosakka_${LegacyDependencies.SCALA_MAJOR_VERSION}:2.3.3"
-    compileOnly "com.softwaremill.macwire:util_${LegacyDependencies.SCALA_MAJOR_VERSION}:2.3.3"
-    compileOnly "com.softwaremill.macwire:proxy_${LegacyDependencies.SCALA_MAJOR_VERSION}:2.3.3"
+    compileOnly "com.softwaremill.macwire:macros_${LegacyDependencies.SCALA_MAJOR_VERSION}:2.3.5"
+    compileOnly "com.softwaremill.macwire:macrosakka_${LegacyDependencies.SCALA_MAJOR_VERSION}:2.3.5"
+    compileOnly "com.softwaremill.macwire:util_${LegacyDependencies.SCALA_MAJOR_VERSION}:2.3.5"
+    compileOnly "com.softwaremill.macwire:proxy_${LegacyDependencies.SCALA_MAJOR_VERSION}:2.3.5"
     compileOnly "com.wire:avs:3.4.100"
     compileOnly "androidx.legacy:legacy-support-v4:1.0.0"
     compileOnly BuildDependencies.threetenbpJava
@@ -113,8 +117,9 @@ dependencies {
     }
     testImplementation "org.scalamock:scalamock_${LegacyDependencies.SCALA_MAJOR_VERSION}:4.1.0"
     testImplementation "org.scalacheck:scalacheck_${LegacyDependencies.SCALA_MAJOR_VERSION}:1.14.0"
-    testImplementation("com.wire:robotest_${LegacyDependencies.SCALA_MAJOR_VERSION}:0.7") {
-        exclude(group: "org.scalatest", module: "scalatest")
+    testImplementation("com.wire:robotest_2.11:0.7") {
+        exclude(group: "org.scalatest", module: "scalatest_2.11")
+        exclude(group: "org.scala-lang", module: "scala-library")
     }
     testImplementation TestDependencies.robolectric
     testImplementation BuildDependencies.androidX.roomRuntime
@@ -134,5 +139,15 @@ dependencies {
     implementation "androidx.sqlite:sqlite:2.0.1"
     implementation "androidx.sqlite:sqlite-framework:2.0.1"
 
+}
+
+//multiple libs that we use depends on scalaLibrary but they all use different versions.
+//force them to use our version
+configurations.all {
+    resolutionStrategy {
+        force LegacyDependencies.scalaLibrary
+        force LegacyDependencies.scalaTest
+        force LegacyDependencies.scalaReflect
+    }
 }
 
