@@ -41,7 +41,7 @@
             android:visibility="gone">
 
             <com.waz.zclient.ui.text.TypefaceTextView
-                android:id="@+id/pickuser_title"
+                android:id="@+id/pick_user_title"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_gravity="center"

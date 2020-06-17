@@ -135,12 +135,11 @@ class SearchUIFragment extends BaseFragment[Container]
     }))
   }
 
-  private lazy val toolbarTitle = returning(view[TypefaceTextView](R.id.pickuser_title)) { vh =>
+  private lazy val toolbarTitle = returning(view[TextView](R.id.pick_user_title)) { vh =>
     subs += userAccountsController.isTeam.flatMap {
+      case true  => userAccountsController.teamData.map(_.map(_.name))
       case false => userAccountsController.currentUser.map(_.map(_.name))
-      case _     => userAccountsController.teamData.map(_.map(_.name))
-    }.map(_.getOrElse(Name.Empty))
-     .onUi(t => vh.foreach(_.setText(t)))
+    }.map(_.getOrElse(Name.Empty)).onUi( t => vh.foreach(v => v.setText(t)))
   }
 
   private lazy val emptyServicesIcon = returning(view[ImageView](R.id.empty_services_icon)) { vh =>
@@ -231,6 +230,7 @@ class SearchUIFragment extends BaseFragment[Container]
     retrieveSearchResults.resultsData.onUi(adapter.updateResults)
 
     searchBox
+    toolbarTitle
 
     inviteButton.foreach { btn =>
       btn.setText(R.string.pref_invite_title)
@@ -239,7 +239,6 @@ class SearchUIFragment extends BaseFragment[Container]
 
     emptyListButton.foreach(_.onClick(browser.openStartUIManageTeam()))
     errorMessageView
-    toolbarTitle
     emptyServicesButton
 
     // Use constant style for left side start ui
