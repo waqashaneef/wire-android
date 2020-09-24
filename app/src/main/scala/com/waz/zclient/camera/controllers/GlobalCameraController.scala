@@ -44,7 +44,7 @@ import scala.concurrent.{ExecutionContext, Future, Promise}
 
 class GlobalCameraController(cameraFactory: CameraFactory)(implicit cxt: WireContext, eventContext: EventContext)
   extends DerivedLogTag {
-  
+
   implicit val cameraExecutionContext = new ExecutionContext {
     private val executor = Executors.newSingleThreadExecutor(new ThreadFactory {
       override def newThread(r: Runnable): Thread = new Thread(r, "CAMERA")
@@ -211,8 +211,8 @@ class AndroidCamera(info: CameraInfo, texture: SurfaceTexture, w: Int, h: Int, c
     c.setDisplayOrientation(getPreviewOrientation(naturalOrientation, info))
 
     supportedFlashModes = getSupportedFlashModesFromCamera
-    if (supportedFlashModes.contains(flashMode)) pms.setFlashMode(flashMode.mode)
-    else pms.setFlashMode(FlashMode.OFF.mode)
+    if (supportedFlashModes.contains(flashMode)) pms.setFlashMode(flashMode.mode.toString)
+    else pms.setFlashMode(FlashMode.OFF.mode.toString)
 
     if (clickToFocusSupported) setFocusMode(wrapper, FOCUS_MODE_AUTO)
     else setFocusMode(wrapper, FOCUS_MODE_CONTINUOUS_PICTURE)
@@ -323,7 +323,7 @@ class AndroidCamera(info: CameraInfo, texture: SurfaceTexture, w: Int, h: Int, c
   }
 
   override def setFlashMode(fm: FlashMode): Unit = DeprecationUtils.setParams(camera.orNull, new CameraWrap {
-    override def f(wrapper: CameraParamsWrapper): Unit = wrapper.get.setFlashMode(fm.mode)
+    override def f(wrapper: CameraParamsWrapper): Unit = wrapper.get.setFlashMode(fm.mode.toString)
   })
 
   private def getPreviewSize(params: CameraParamsWrapper, viewWidth: Int, viewHeight: Int) = {
@@ -361,7 +361,7 @@ class AndroidCamera(info: CameraInfo, texture: SurfaceTexture, w: Int, h: Int, c
     else (info.fixedOrientation + deviceRotationDegrees) % 360
 
   private def getSupportedFlashModesFromCamera = camera.fold(Set.empty[FlashMode]) { c =>
-    Option(c.getParameters.getSupportedFlashModes).fold(Set.empty[FlashMode])(_.asScala.toSet.map(FlashMode.get))
+    Option(c.getParameters.getSupportedFlashModes).fold(Set.empty[FlashMode])(_.asScala.toSet.map(mode => FlashMode.get(mode.toInt)))
   }
 
   private def clickToFocusSupported = camera.fold(false)(c => c.getParameters.getMaxNumFocusAreas > 0 && supportsFocusMode(new CameraParamsWrapper(c.getParameters), FOCUS_MODE_AUTO))
