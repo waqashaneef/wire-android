@@ -1,6 +1,7 @@
 package com.waz.zclient.camera.controllers
 
-import java.io.{ByteArrayInputStream, ByteArrayOutputStream, Closeable}
+import java.io.{ByteArrayInputStream, Closeable}
+import java.util.Comparator
 import java.util.concurrent.ArrayBlockingQueue
 
 import android.content.Context
@@ -9,6 +10,7 @@ import android.hardware.camera2._
 import android.media.ImageReader.OnImageAvailableListener
 import android.media.{ExifInterface, Image, ImageReader}
 import android.os.{Handler, HandlerThread}
+import android.util.{Log, Size}
 import android.view.Surface
 import com.waz.log.BasicLogging.LogTag.DerivedLogTag
 import com.waz.threading.Threading
@@ -19,7 +21,7 @@ import scala.collection.JavaConverters._
 import scala.concurrent.{Future, Promise}
 import scala.util.{Failure, Success}
 
-case class CameraData(cameraId: String, pixelFormat: Int, orientation: Orientation)
+case class CameraData(cameraId: String, pixelFormat: Int)
 
 case class CombinedCaptureResult(image: Image,
                                  metadata: CaptureResult,
@@ -29,8 +31,13 @@ case class CombinedCaptureResult(image: Image,
   override def close(): Unit = image.close()
 }
 
-class AndroidCamera2(cameraData: CameraData, cxt: Context, flashMode: FlashMode, texture: SurfaceTexture)
-  extends DerivedLogTag with WireCamera {
+class AndroidCamera2(cameraData: CameraData,
+                     cxt: Context,
+                     width: Int,
+                     height: Int,
+                     flashMode: FlashMode,
+                     texture: SurfaceTexture)
+  extends WireCamera with DerivedLogTag {
 
   private val cameraThread = returning(new HandlerThread("CameraThread")) {
     _.start()
@@ -48,6 +55,7 @@ class AndroidCamera2(cameraData: CameraData, cxt: Context, flashMode: FlashMode,
   private var previewSize: Option[PreviewSize] = None
   private val camera = openCamera(cameraManager, cameraData.cameraId, cameraHandler)
 
+  private var orientation: Orientation = Orientation(0)
   private val ImageBufferSize = 3
   private val ImageCaptureTimeoutMillis = 5000
 
@@ -56,13 +64,17 @@ class AndroidCamera2(cameraData: CameraData, cxt: Context, flashMode: FlashMode,
     try {
       cameraManager.openCamera(id, new CameraDevice.StateCallback {
         override def onOpened(camera: CameraDevice): Unit = {
+          Log.e("Camera2", "Camera has been opened successfully")
           createCameraSession(camera)
           promise.success(Option(camera))
         }
 
-        override def onDisconnected(camera: CameraDevice): Unit = promise.success(None)
-
+        override def onDisconnected(camera: CameraDevice): Unit = {
+          Log.e("Camera2", "Camera has been disconnected")
+          promise.success(None)
+        }
         override def onError(camera: CameraDevice, error: Int): Unit = {
+          Log.e("Camera2", "Camera has an error")
           val msg = error match {
             case CameraDevice.StateCallback.ERROR_CAMERA_DEVICE => "Fatal (device)"
             case CameraDevice.StateCallback.ERROR_CAMERA_DISABLED => "Device policy"
@@ -83,24 +95,31 @@ class AndroidCamera2(cameraData: CameraData, cxt: Context, flashMode: FlashMode,
 
   def createCameraSession(camera: CameraDevice) = {
     cameraRequest = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+
     val size = cameraCharacteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
       .getOutputSizes(cameraData.pixelFormat)
       .maxBy { size => size.getHeight * size.getWidth }
+
     imageReader = ImageReader.newInstance(
       size.getWidth, size.getHeight, cameraData.pixelFormat, ImageBufferSize)
+    imageReader.setOnImageAvailableListener(
+      null, imageReaderHandler)
 
     val surface = new Surface(texture)
     cameraRequest.addTarget(surface)
-    camera.createCaptureSession(List(surface).asJava, new CameraCaptureSession.StateCallback {
+
+    camera.createCaptureSession(List(surface, imageReader.getSurface).asJava, new CameraCaptureSession.StateCallback {
       override def onConfigured(session: CameraCaptureSession): Unit = {
         cameraSession = session
-        cameraRequest.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-        cameraRequest.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_AUTO)
-        cameraRequest.set(CaptureRequest.FLASH_MODE, getSupportedFlashMode(flashMode))
+        cameraRequest.set(CaptureRequest.CONTROL_MODE.asInstanceOf[CaptureRequest.Key[Any]], CameraMetadata.CONTROL_MODE_AUTO)
+        cameraRequest.set(CaptureRequest.CONTROL_AF_MODE.asInstanceOf[CaptureRequest.Key[Any]], CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+        cameraRequest.set(CaptureRequest.FLASH_MODE.asInstanceOf[CaptureRequest.Key[Any]], getSupportedFlashMode(flashMode))
         cameraSession.setRepeatingRequest(cameraRequest.build, null, cameraHandler)
       }
 
-      override def onConfigureFailed(session: CameraCaptureSession): Unit = super.onConfigureFailed(session)
+      override def onConfigureFailed(session: CameraCaptureSession): Unit = {
+        cameraSession = null
+      }
 
     }, cameraHandler)
   }
@@ -117,7 +136,7 @@ class AndroidCamera2(cameraData: CameraData, cxt: Context, flashMode: FlashMode,
     takePhoto().onComplete {
       case Success(value) =>
         value.format match {
-          case ImageFormat.JPEG || ImageFormat.DEPTH_JPEG =>
+          case ImageFormat.JPEG | ImageFormat.DEPTH_JPEG =>
             val buffer = value.image.getPlanes.head.getBuffer
             val data = new Array[Byte](buffer.remaining())
             buffer.get(data)
@@ -132,12 +151,6 @@ class AndroidCamera2(cameraData: CameraData, cxt: Context, flashMode: FlashMode,
       case Failure(exception) => promise.failure(exception)
     }(Threading.Ui)
     promise.future
-  }
-
-  private def generateOutputByteArray(corrected: Bitmap): Array[Byte] = {
-    val output = new ByteArrayOutputStream()
-    corrected.compress(Bitmap.CompressFormat.JPEG, 100, output)
-    output.toByteArray
   }
 
   private def takePhoto(): Future[CombinedCaptureResult] = {
@@ -158,14 +171,13 @@ class AndroidCamera2(cameraData: CameraData, cxt: Context, flashMode: FlashMode,
       private def computeExifOrientation(rotationDegrees: Int, mirrored: Boolean) = (rotationDegrees, mirrored) match {
         case (0, false) => ExifInterface.ORIENTATION_NORMAL
         case (0, true) => ExifInterface.ORIENTATION_FLIP_HORIZONTAL
-        case (180, false) => ExifInterface.ORIENTATION_ROTATE_180
-        case (180, true) => ExifInterface.ORIENTATION_FLIP_VERTICAL
-        case (270, true) => ExifInterface.ORIENTATION_TRANSVERSE
         case (90, false) => ExifInterface.ORIENTATION_ROTATE_90
         case (90, true) => ExifInterface.ORIENTATION_TRANSPOSE
-        case (270, true) => ExifInterface.ORIENTATION_ROTATE_270
-        case (270, false) => ExifInterface.ORIENTATION_TRANSVERSE
-        case (_, _) => ExifInterface.ORIENTATION_UNDEFINED
+        case (180, false) => ExifInterface.ORIENTATION_ROTATE_180
+        case (180, true) => ExifInterface.ORIENTATION_FLIP_VERTICAL
+        case (270, false) => ExifInterface.ORIENTATION_ROTATE_270
+        case (270, true) => ExifInterface.ORIENTATION_TRANSVERSE
+        case _ => ExifInterface.ORIENTATION_UNDEFINED
       }
 
       override def onCaptureCompleted(session: CameraCaptureSession,
@@ -188,7 +200,7 @@ class AndroidCamera2(cameraData: CameraData, cxt: Context, flashMode: FlashMode,
         }
 
         val mirrored = cameraCharacteristics.get(CameraCharacteristics.LENS_FACING) == CameraMetadata.LENS_FACING_FRONT
-        val exifOrientation = computeExifOrientation(cameraData.orientation.orientation, mirrored)
+        val exifOrientation = computeExifOrientation(orientation.orientation, mirrored)
         promise.success(CombinedCaptureResult(image, result, exifOrientation, imageReader.getImageFormat))
       }
     }, cameraHandler)
@@ -202,17 +214,29 @@ class AndroidCamera2(cameraData: CameraData, cxt: Context, flashMode: FlashMode,
     cameraThread.quitSafely()
     camera.foreach {
       case Some(x) => x.close()
+      case None => // Do nothing
     }(Threading.Ui)
   }
 
   override def setFocusArea(touchRect: Rect, w: Int, h: Int): Future[Unit] = Future.successful(Unit) //TODO set the control regions for the focus
 
   override def setFlashMode(fm: FlashMode): Unit = {
-    cameraRequest.set(CaptureRequest.FLASH_MODE, getSupportedFlashMode(fm))
+    cameraRequest.set(CaptureRequest.FLASH_MODE.asInstanceOf[CaptureRequest.Key[Any]], getSupportedFlashMode(fm))
     cameraSession.setRepeatingRequest(cameraRequest.build(), null, cameraHandler)
   }
 
   override def getSupportedFlashModes: Set[FlashMode] = getSupportedFlashModesFromCamera
 
-  override def setOrientation(o: Orientation): Unit = Unit //Not needed for now
+  override def setOrientation(o: Orientation): Unit = {
+    orientation = o
+  }
+
+  override def getCurrentCameraFacing: Int = cameraCharacteristics.get(CameraCharacteristics.LENS_FACING)
+
+  class CompareSizesByArea extends Comparator[Size] {
+    def compare(lhs: Size, rhs: Size): Int = { // We cast here to ensure the multiplications won't overflow
+      (lhs.getWidth * lhs.getHeight - rhs.getWidth * rhs.getHeight).signum
+    }
+  }
+
 }
