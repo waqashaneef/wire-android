@@ -180,6 +180,7 @@ trait WireCamera {
 object WireCamera {
   val ImageBufferSize = 3
   val ImageCaptureTimeoutMillis = 5000
+  val Size_1080p: SmartSize = new SmartSize(1920, 1080)
 }
 
 //CameraInfo.orientation is fixed for any given device, so we only need to store it once.

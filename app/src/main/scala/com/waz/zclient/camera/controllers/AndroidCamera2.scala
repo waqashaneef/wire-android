@@ -42,8 +42,8 @@ class AndroidCamera2(cameraData: CameraData,
                      texture: SurfaceTexture)
   extends WireCamera with DerivedLogTag {
 
-  import WireCamera._
   import ExifInterface._
+  import WireCamera._
   import com.waz.zclient.log.LogUI._
 
   private lazy val cameraThread = returning(new HandlerThread("CameraThread")) {
@@ -113,30 +113,34 @@ class AndroidCamera2(cameraData: CameraData,
         }
       }, cameraHandler)
     } catch {
-      case ex: CameraAccessException => error(l"Camera access error: ", ex)
+      case ex: CameraAccessException => error(l"Camera access error when opening camera: ", ex)
     }
   }
 
   private def createCameraSession(targets: List[Surface], camera: CameraDevice): Unit = {
-    camera.createCaptureSession(targets.asJava, new CameraCaptureSession.StateCallback {
-      override def onConfigured(session: CameraCaptureSession): Unit = {
-        cameraSession = Option(session)
-        cameraRequest.foreach { request =>
-          request.set(CaptureRequest.CONTROL_MODE.asInstanceOf[CaptureRequest.Key[Any]], CameraMetadata.CONTROL_MODE_AUTO)
-          request.set(CaptureRequest.CONTROL_AF_MODE.asInstanceOf[CaptureRequest.Key[Any]], CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-          request.set(CaptureRequest.FLASH_MODE.asInstanceOf[CaptureRequest.Key[Any]], getSupportedFlashMode(flashMode))
-          session.setRepeatingRequest(request.build(), null, cameraHandler)
+    try {
+      camera.createCaptureSession(targets.asJava, new CameraCaptureSession.StateCallback {
+        override def onConfigured(session: CameraCaptureSession): Unit = {
+          cameraSession = Option(session)
+          cameraRequest.foreach { request =>
+            request.set(CaptureRequest.CONTROL_MODE.asInstanceOf[CaptureRequest.Key[Any]], CameraMetadata.CONTROL_MODE_AUTO)
+            request.set(CaptureRequest.CONTROL_AF_MODE.asInstanceOf[CaptureRequest.Key[Any]], CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+            request.set(CaptureRequest.FLASH_MODE.asInstanceOf[CaptureRequest.Key[Any]], getSupportedFlashMode(flashMode))
+            session.setRepeatingRequest(request.build(), null, cameraHandler)
+          }
         }
-      }
 
-      override def onConfigureFailed(session: CameraCaptureSession): Unit = {
-        //Release open session
-        session.abortCaptures()
-        session.close()
-        cameraSession = None
-      }
+        override def onConfigureFailed(session: CameraCaptureSession): Unit = {
+          //Release open session
+          session.abortCaptures()
+          session.close()
+          cameraSession = None
+        }
 
-    }, cameraHandler)
+      }, cameraHandler)
+    } catch {
+      case ex: CameraAccessException => error(l"Camera access error when creating camera session: ", ex)
+    }
   }
 
   private def getSupportedFlashModesFromCamera =
@@ -148,24 +152,30 @@ class AndroidCamera2(cameraData: CameraData,
 
   override def takePicture(shutter: => Unit): Future[Array[Byte]] = {
     val promise = Promise[Array[Byte]]
-    takePhoto().onComplete {
-      case Success(photoResult) =>
-        val buffer = photoResult.image.getPlanes.head.getBuffer
-        val data = new Array[Byte](buffer.remaining())
-        buffer.get(data)
-        // Correct the orientation, if needed.
-        val result = photoResult.orientation match {
-          case ORIENTATION_NORMAL => data
-          case ORIENTATION_UNDEFINED =>
-            val corrected = BitmapUtils.fixOrientationForUndefined(BitmapFactory.decodeByteArray(data, 0, data.length), photoResult.orientation)
-            generateOutputByteArray(corrected)
-          case _ =>
-            val corrected = BitmapUtils.fixOrientation(BitmapFactory.decodeByteArray(data, 0, data.length), photoResult.orientation)
-            generateOutputByteArray(corrected)
-        }
-        promise.success(result)
-      case Failure(exception) => promise.failure(exception)
-    }(Threading.Ui)
+    try {
+      takePhoto().onComplete {
+        case Success(photoResult) =>
+          val buffer = photoResult.image.getPlanes.head.getBuffer
+          val data = new Array[Byte](buffer.remaining())
+          buffer.get(data)
+          // Correct the orientation, if needed.
+          val result = photoResult.orientation match {
+            case ORIENTATION_NORMAL => data
+            case ORIENTATION_UNDEFINED =>
+              val corrected = BitmapUtils.fixOrientationForUndefined(BitmapFactory.decodeByteArray(data, 0, data.length), photoResult.orientation)
+              generateOutputByteArray(corrected)
+            case _ =>
+              val corrected = BitmapUtils.fixOrientation(BitmapFactory.decodeByteArray(data, 0, data.length), photoResult.orientation)
+              generateOutputByteArray(corrected)
+          }
+          promise.success(result)
+        case Failure(exception) => promise.failure(exception)
+      }(Threading.Ui)
+    } catch {
+      case ex: CameraAccessException =>
+        error(l"Camera access error when taking a photo : ", ex)
+        promise.failure(ex)
+    }
     promise.future
   }
 
@@ -288,8 +298,8 @@ class AndroidCamera2(cameraData: CameraData,
   def getPreviewOutputSize[T](characteristics: CameraCharacteristics, targetClass: Class[T]): PreviewSize = {
     val windowManager = cxt.getApplicationContext.getSystemService(Context.WINDOW_SERVICE).asInstanceOf[WindowManager]
     val screenSize = getDisplaySmartSize(windowManager.getDefaultDisplay)
-    val hdScreen = screenSize.long >= SIZE_1080P.long | screenSize.short >= SIZE_1080P.short
-    val maxSize = if (hdScreen) SIZE_1080P else screenSize
+    val hdScreen = screenSize.long >= Size_1080p.long | screenSize.short >= Size_1080p.short
+    val maxSize = if (hdScreen) Size_1080p else screenSize
 
     val config = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
     val allSizes = config.getOutputSizes(targetClass)
@@ -298,8 +308,6 @@ class AndroidCamera2(cameraData: CameraData,
     val newSmartSize = validSizes.filter(smartSize => smartSize.long <= maxSize.long && smartSize.short <= maxSize.short).head
     newSmartSize.getSize
   }
-
-  val SIZE_1080P: SmartSize = new SmartSize(1920, 1080)
 }
 
 class SmartSize(width: Int, height: Int) {
