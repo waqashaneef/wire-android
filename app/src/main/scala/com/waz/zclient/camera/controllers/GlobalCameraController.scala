@@ -28,9 +28,8 @@ import com.waz.threading.Threading
 import com.waz.utils.RichFuture
 import com.waz.zclient.WireContext
 import com.waz.zclient.camera.{CameraFacing, FlashMode}
-import com.waz.zclient.core.logging.Logger
 import com.waz.zclient.utils.Callback
-import com.wire.signals.{CancellableFuture, EventContext, Signal}
+import com.wire.signals.{CancellableFuture, EventContext, Signal, SourceSignal}
 
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.{ExecutionContext, Future}
@@ -38,12 +37,14 @@ import scala.concurrent.{ExecutionContext, Future}
 class GlobalCameraController(cameraFactory: CameraFactory)(implicit cxt: WireContext, eventContext: EventContext)
   extends DerivedLogTag {
 
+  import com.waz.zclient.log.LogUI._
+
   implicit val cameraExecutionContext: ExecutionContext = new ExecutionContext {
     private val executor = Executors.newSingleThreadExecutor(new ThreadFactory {
       override def newThread(r: Runnable): Thread = new Thread(r, "CAMERA")
     })
 
-    override def reportFailure(cause: Throwable): Unit = Logger.error("GlobalCameraController", "Problem executing on Camera Thread.", cause)
+    override def reportFailure(cause: Throwable): Unit = error(l"Problem executing on Camera Thread.", cause)
 
     override def execute(runnable: Runnable): Unit = executor.submit(runnable)
   }
@@ -56,9 +57,8 @@ class GlobalCameraController(cameraFactory: CameraFactory)(implicit cxt: WireCon
   protected[camera] var loadFuture = CancellableFuture.cancelled[(PreviewSize, Set[FlashMode])]()
   protected[camera] var currentCameraData = availableCameraData.headOption //save this in global controller for consistency during the life of the app
 
-  val currentFlashMode = Signal(FlashMode.OFF)
-
-  val deviceOrientation = Signal(Orientation(0))
+  val currentFlashMode: SourceSignal[FlashMode] = Signal(FlashMode.OFF)
+  val deviceOrientation: SourceSignal[Orientation] = Signal(Orientation(0))
 
   def getCurrentCameraFacing = currentCamera.map(_.getCurrentCameraFacing)
 
@@ -68,11 +68,10 @@ class GlobalCameraController(cameraFactory: CameraFactory)(implicit cxt: WireCon
    */
 
   def goToNextCamera() =
-    currentCamera.collect {
-      case camera: WireCamera =>
-        camera.release()
-        val index = availableCameraData.indexWhere(_.facing != camera.getCurrentCameraFacing)
-        currentCameraData = availableCameraData.lift(index)
+    currentCamera.foreach { camera: WireCamera =>
+      camera.release()
+      val index = availableCameraData.indexWhere(_.facing != camera.getCurrentCameraFacing)
+      currentCameraData = availableCameraData.lift(index)
     }
 
   /**
@@ -131,7 +130,10 @@ trait CameraFactory {
   def apply(data: CameraData, texture: SurfaceTexture, cxt: Context, width: Int, height: Int, devOrientation: Orientation, flashMode: FlashMode): WireCamera
 }
 
-class AndroidCameraFactory extends CameraFactory {
+class AndroidCameraFactory extends CameraFactory with DerivedLogTag {
+
+  import com.waz.zclient.log.LogUI._
+
   override def apply(data: CameraData, texture: SurfaceTexture, cxt: Context, width: Int, height: Int, devOrientation: Orientation, flashMode: FlashMode): WireCamera = {
     val camera = new AndroidCamera2(data, cxt, width, height, flashMode, texture)
     camera.initCamera()
@@ -142,23 +144,17 @@ class AndroidCameraFactory extends CameraFactory {
     val compatibleCameras = ListBuffer[CameraData]()
     val cameraIds = cameraManager.getCameraIdList.filter { id =>
       val characteristics = cameraManager.getCameraCharacteristics(id)
-      val capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
-      if (capabilities != null) {
-        capabilities.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_BACKWARD_COMPATIBLE)
-      } else {
-        false
-      }
+      Option(characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES))
+        .exists(_.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_BACKWARD_COMPATIBLE))
     }
-
-    cameraIds
-      .foreach { cameraId =>
-        val facing = cameraManager.getCameraCharacteristics(cameraId).get(CameraCharacteristics.LENS_FACING)
-        compatibleCameras += CameraData(cameraId, facing)
-      }
+    cameraIds.foreach { cameraId =>
+      val facing = cameraManager.getCameraCharacteristics(cameraId).get(CameraCharacteristics.LENS_FACING)
+      compatibleCameras += CameraData(cameraId, facing)
+    }
     compatibleCameras
   } catch {
     case e: Throwable =>
-      Logger.warn("GlobalCameraController", "Failed to retrieve camera info - camera is likely unavailable", e)
+      error(l"Failed to retrieve camera info - camera is likely unavailable", e)
       Seq.empty
   }
 }
@@ -181,18 +177,9 @@ trait WireCamera {
   def getCurrentCameraFacing: Int
 }
 
-object GlobalCameraController {
-  val Ratio_16_9: Double = 16.0 / 9.0
-  val MediumSize = 1448
-}
-
 object WireCamera {
-  val FOCUS_MODE_AUTO = "auto"
-  val FOCUS_MODE_CONTINUOUS_PICTURE = "continuous-picture"
-  val ASPECT_TOLERANCE: Double = 0.1
-  val camCoordsRange = 2000
-  val camCoordsOffset = 1000
-  val focusWeight = 1000
+  val ImageBufferSize = 3
+  val ImageCaptureTimeoutMillis = 5000
 }
 
 //CameraInfo.orientation is fixed for any given device, so we only need to store it once.

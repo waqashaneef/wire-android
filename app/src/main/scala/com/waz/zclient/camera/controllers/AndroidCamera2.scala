@@ -42,46 +42,49 @@ class AndroidCamera2(cameraData: CameraData,
                      texture: SurfaceTexture)
   extends WireCamera with DerivedLogTag {
 
+  import WireCamera._
+  import ExifInterface._
+  import com.waz.zclient.log.LogUI._
+
   private lazy val cameraThread = returning(new HandlerThread("CameraThread")) {
     _.start()
   }
   private lazy val imageReaderThread = returning(new HandlerThread("ImageReaderThread")) {
     _.start()
   }
+
   private val cameraHandler = new Handler(cameraThread.getLooper)
   private val imageReaderHandler = new Handler(imageReaderThread.getLooper)
-  private var imageReader: ImageReader = _
+
   private val cameraManager = cxt.getApplicationContext.getSystemService(Context.CAMERA_SERVICE).asInstanceOf[CameraManager]
   private val cameraCharacteristics = cameraManager.getCameraCharacteristics(cameraData.cameraId)
-  private var cameraRequest: CaptureRequest.Builder = _
+
+  private lazy val compatibleSizes = cameraCharacteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+    .getOutputSizes(ImageFormat.JPEG)
+    .maxBy { size => size.getHeight * size.getWidth }
+
+  private lazy val imageReader: ImageReader = returning(ImageReader.newInstance(compatibleSizes.getWidth, compatibleSizes.getHeight, ImageFormat.JPEG, ImageBufferSize)) { reader =>
+    reader.setOnImageAvailableListener(null, imageReaderHandler)
+  }
+
+  private var cameraRequest: Option[CaptureRequest.Builder] = None
   private var cameraSession: Option[CameraCaptureSession] = None
   private var camera: Option[CameraDevice] = None
   private var orientation: Orientation = Orientation(0)
-  private val ImageBufferSize = 3
-  private val ImageCaptureTimeoutMillis = 5000
 
   def initCamera(): Unit = {
     openCamera(cameraManager, cameraData.cameraId, cameraHandler)
-
-    val size = cameraCharacteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-      .getOutputSizes(ImageFormat.JPEG)
-      .maxBy { size => size.getHeight * size.getWidth }
-
-    imageReader = ImageReader.newInstance(size.getWidth, size.getHeight, ImageFormat.JPEG, ImageBufferSize)
-    imageReader.setOnImageAvailableListener(
-      null, imageReaderHandler)
 
     texture.setDefaultBufferSize(getPreviewSize.w.toInt, getPreviewSize.h.toInt)
 
     val surface = new Surface(texture)
     val targets = List(surface, imageReader.getSurface)
 
-    camera.collect {
-      case device: CameraDevice =>
-        cameraRequest = returning(device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)) {
-          _.addTarget(surface)
-        }
-        createCameraSession(targets, device)
+    camera.foreach { device: CameraDevice =>
+      cameraRequest = returning(Option(device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW))) {
+        _.foreach(_.addTarget(surface))
+      }
+      createCameraSession(targets, device)
     }
   }
 
@@ -97,8 +100,8 @@ class AndroidCamera2(cameraData: CameraData,
           camera = None
         }
 
-        override def onError(camera: CameraDevice, error: Int): Unit = {
-          val msg = error match {
+        override def onError(camera: CameraDevice, errorCode: Int): Unit = {
+          val msg = errorCode match {
             case CameraDevice.StateCallback.ERROR_CAMERA_DEVICE => "Fatal (device)"
             case CameraDevice.StateCallback.ERROR_CAMERA_DISABLED => "Device policy"
             case CameraDevice.StateCallback.ERROR_CAMERA_IN_USE => "Camera in use"
@@ -106,12 +109,11 @@ class AndroidCamera2(cameraData: CameraData,
             case CameraDevice.StateCallback.ERROR_MAX_CAMERAS_IN_USE => "Maximum cameras in use"
             case _ => "Unknown"
           }
-          val errorMessage = "Camera  error:" + "(" + error + ") " + msg
-          //TODO log errors
+          error(l"Camera  error: ($errorCode) $msg")
         }
       }, cameraHandler)
     } catch {
-      case ex: CameraAccessException => //TODO log errors
+      case ex: CameraAccessException => error(l"Camera access error: ", ex)
     }
   }
 
@@ -119,13 +121,20 @@ class AndroidCamera2(cameraData: CameraData,
     camera.createCaptureSession(targets.asJava, new CameraCaptureSession.StateCallback {
       override def onConfigured(session: CameraCaptureSession): Unit = {
         cameraSession = Option(session)
-        cameraRequest.set(CaptureRequest.CONTROL_MODE.asInstanceOf[CaptureRequest.Key[Any]], CameraMetadata.CONTROL_MODE_AUTO)
-        cameraRequest.set(CaptureRequest.CONTROL_AF_MODE.asInstanceOf[CaptureRequest.Key[Any]], CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-        cameraRequest.set(CaptureRequest.FLASH_MODE.asInstanceOf[CaptureRequest.Key[Any]], getSupportedFlashMode(flashMode))
-        session.setRepeatingRequest(cameraRequest.build(), null, cameraHandler)
+        cameraRequest.foreach { request =>
+          request.set(CaptureRequest.CONTROL_MODE.asInstanceOf[CaptureRequest.Key[Any]], CameraMetadata.CONTROL_MODE_AUTO)
+          request.set(CaptureRequest.CONTROL_AF_MODE.asInstanceOf[CaptureRequest.Key[Any]], CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+          request.set(CaptureRequest.FLASH_MODE.asInstanceOf[CaptureRequest.Key[Any]], getSupportedFlashMode(flashMode))
+          session.setRepeatingRequest(request.build(), null, cameraHandler)
+        }
       }
 
-      override def onConfigureFailed(session: CameraCaptureSession): Unit = {}
+      override def onConfigureFailed(session: CameraCaptureSession): Unit = {
+        //Release open session
+        session.abortCaptures()
+        session.close()
+        cameraSession = None
+      }
 
     }, cameraHandler)
   }
@@ -140,19 +149,18 @@ class AndroidCamera2(cameraData: CameraData,
   override def takePicture(shutter: => Unit): Future[Array[Byte]] = {
     val promise = Promise[Array[Byte]]
     takePhoto().onComplete {
-      case Success(value) =>
-        val buffer = value.image.getPlanes.head.getBuffer
+      case Success(photoResult) =>
+        val buffer = photoResult.image.getPlanes.head.getBuffer
         val data = new Array[Byte](buffer.remaining())
         buffer.get(data)
         // Correct the orientation, if needed.
-        val result = value.orientation match {
-          case ExifInterface.ORIENTATION_NORMAL =>
-            data
-          case ExifInterface.ORIENTATION_UNDEFINED =>
-            val corrected = BitmapUtils.fixOrientationForUndefined(BitmapFactory.decodeByteArray(data, 0, data.length), value.orientation)
+        val result = photoResult.orientation match {
+          case ORIENTATION_NORMAL => data
+          case ORIENTATION_UNDEFINED =>
+            val corrected = BitmapUtils.fixOrientationForUndefined(BitmapFactory.decodeByteArray(data, 0, data.length), photoResult.orientation)
             generateOutputByteArray(corrected)
           case _ =>
-            val corrected = BitmapUtils.fixOrientation(BitmapFactory.decodeByteArray(data, 0, data.length), value.orientation)
+            val corrected = BitmapUtils.fixOrientation(BitmapFactory.decodeByteArray(data, 0, data.length), photoResult.orientation)
             generateOutputByteArray(corrected)
         }
         promise.success(result)
@@ -161,11 +169,10 @@ class AndroidCamera2(cameraData: CameraData,
     promise.future
   }
 
-  private def generateOutputByteArray(corrected: Bitmap): Array[Byte] = {
-    val output = new ByteArrayOutputStream()
-    corrected.compress(Bitmap.CompressFormat.JPEG, 100, output)
-    output.toByteArray
-  }
+  private def generateOutputByteArray(corrected: Bitmap): Array[Byte] =
+    returning(new ByteArrayOutputStream()) {
+      corrected.compress(Bitmap.CompressFormat.JPEG, 100, _)
+    }.toByteArray
 
   private def takePhoto(): Future[CombinedCaptureResult] = {
     val promise = Promise[CombinedCaptureResult]()
@@ -177,81 +184,84 @@ class AndroidCamera2(cameraData: CameraData,
       }
     }, imageReaderHandler)
 
-    cameraSession.collect {
-      case session: CameraCaptureSession =>
-        val captureRequest = returning(session.getDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)) {
-          _.addTarget(imageReader.getSurface)
+    cameraSession.foreach { session: CameraCaptureSession =>
+      val captureRequest = returning(session.getDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)) {
+        _.addTarget(imageReader.getSurface)
+      }
+      session.capture(captureRequest.build(), new CameraCaptureSession.CaptureCallback {
+        private def computeExifOrientation(rotationDegrees: Int, mirrored: Boolean) = (rotationDegrees, mirrored) match {
+          case (0, false)    => ORIENTATION_NORMAL
+          case (0, true)     => ORIENTATION_FLIP_HORIZONTAL
+          case (90, false)   => ORIENTATION_ROTATE_90
+          case (90, true)    => ORIENTATION_TRANSPOSE
+          case (180, false)  => ORIENTATION_ROTATE_180
+          case (180, true)   => ORIENTATION_FLIP_VERTICAL
+          case (270, false)  => ORIENTATION_TRANSVERSE
+          case (270, true)   => ORIENTATION_ROTATE_270
+          case _             => ORIENTATION_UNDEFINED
         }
-        session.capture(captureRequest.build(), new CameraCaptureSession.CaptureCallback {
-          private def computeExifOrientation(rotationDegrees: Int, mirrored: Boolean) = (rotationDegrees, mirrored) match {
-            case (0, false) => ExifInterface.ORIENTATION_NORMAL
-            case (0, true) => ExifInterface.ORIENTATION_FLIP_HORIZONTAL
-            case (90, false) => ExifInterface.ORIENTATION_ROTATE_90
-            case (90, true) => ExifInterface.ORIENTATION_TRANSPOSE
-            case (180, false) => ExifInterface.ORIENTATION_ROTATE_180
-            case (180, true) => ExifInterface.ORIENTATION_FLIP_VERTICAL
-            case (270, false) => ExifInterface.ORIENTATION_TRANSVERSE
-            case (270, true) => ExifInterface.ORIENTATION_ROTATE_270
-            case _ => ExifInterface.ORIENTATION_UNDEFINED
-          }
 
-          private def computeRelativeOrientation(orientation: Int, mirrored: Boolean): Int = {
-            if (orientation == android.view.OrientationEventListener.ORIENTATION_UNKNOWN) return 0
+        private def computeRelativeOrientation(orientation: Int, mirrored: Boolean): Int =
+          if (orientation != android.view.OrientationEventListener.ORIENTATION_UNKNOWN) {
             val sensorOrientation = cameraCharacteristics.get(CameraCharacteristics.SENSOR_ORIENTATION)
+
+            //Round the orientation to the nearest 90
             var deviceOrientation = (orientation + 45) / 90 * 90
+
+            //if front-facing flip the image
             if (mirrored) deviceOrientation = -deviceOrientation
+
+            //Find the relative orientation between the camera sensor and the device orientation
             (sensorOrientation + deviceOrientation + 360) % 360
+          } else 0
+
+        override def onCaptureCompleted(session: CameraCaptureSession,
+                                        request: CaptureRequest,
+                                        result: TotalCaptureResult): Unit = {
+          super.onCaptureCompleted(session, request, result)
+          val timeoutExc = new RuntimeException("Image de-queuing took too long")
+          val timeoutRunnable = new Runnable {
+            override def run(): Unit = promise.failure(timeoutExc)
           }
+          imageReaderHandler.postDelayed(timeoutRunnable, ImageCaptureTimeoutMillis)
 
-          override def onCaptureCompleted(session: CameraCaptureSession,
-                                          request: CaptureRequest,
-                                          result: TotalCaptureResult): Unit = {
-            super.onCaptureCompleted(session, request, result)
-            val timeoutExc = new RuntimeException("Image de-queuing took too long")
-            val timeoutRunnable = new Runnable {
-              override def run(): Unit = promise.failure(timeoutExc)
-            }
-            imageReaderHandler.postDelayed(timeoutRunnable, ImageCaptureTimeoutMillis)
+          val image = imageQueue.take()
 
-            val image = imageQueue.take()
+          imageReaderHandler.removeCallbacks(timeoutRunnable)
+          imageReader.setOnImageAvailableListener(null, null)
 
-            imageReaderHandler.removeCallbacks(timeoutRunnable)
-            imageReader.setOnImageAvailableListener(null, null)
-
-            while (imageQueue.size > 0) {
-              imageQueue.take().close()
-            }
-            val mirrored = getCurrentCameraFacing == CameraMetadata.LENS_FACING_FRONT
-            val relativeOrientation = computeRelativeOrientation(orientation.orientation, mirrored)
-            val exifOrientation = computeExifOrientation(relativeOrientation, mirrored)
-            promise.success(CombinedCaptureResult(image, result, exifOrientation, imageReader.getImageFormat))
+          while (imageQueue.size > 0) {
+            imageQueue.take().close()
           }
-        }, cameraHandler)
+          val mirrored = getCurrentCameraFacing == CameraMetadata.LENS_FACING_FRONT
+          val relativeOrientation = computeRelativeOrientation(orientation.orientation, mirrored)
+          val exifOrientation = computeExifOrientation(relativeOrientation, mirrored)
+          promise.success(CombinedCaptureResult(image, result, exifOrientation, imageReader.getImageFormat))
+        }
+      }, cameraHandler)
     }
     promise.future
   }
 
   override def release(): Unit = {
+    cameraRequest = None
     imageReader.discardFreeBuffers()
     imageReader.close()
-    cameraSession.collect {
-      case session: CameraCaptureSession =>
-        session.stopRepeating()
-        session.close()
+    cameraSession.foreach { session: CameraCaptureSession =>
+      session.stopRepeating()
+      session.close()
     }
-    camera.collect {
-      case device: CameraDevice =>
-        device.close()
-    }
+    camera.foreach(_.close())
   }
 
   override def setFocusArea(touchRect: Rect, w: Int, h: Int): Future[Unit] = Future.successful(Unit) //TODO set the control regions for the focus
 
   override def setFlashMode(fm: FlashMode): Unit = {
-    cameraSession.collect {
-      case session: CameraCaptureSession =>
-        cameraRequest.set(CaptureRequest.FLASH_MODE.asInstanceOf[CaptureRequest.Key[Any]], getSupportedFlashMode(fm))
-        session.setRepeatingRequest(cameraRequest.build(), null, cameraHandler)
+    cameraSession.foreach { session: CameraCaptureSession =>
+      cameraRequest.foreach { request =>
+        request.set(CaptureRequest.FLASH_MODE.asInstanceOf[CaptureRequest.Key[Any]], getSupportedFlashMode(fm))
+        session.setRepeatingRequest(request.build(), null, cameraHandler)
+      }
     }
   }
 
