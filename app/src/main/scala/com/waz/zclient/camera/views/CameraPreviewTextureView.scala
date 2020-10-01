@@ -59,7 +59,7 @@ class CameraPreviewTextureView(val cxt: Context, val attrs: AttributeSet, val de
 
   private var observer = Option.empty[CameraPreviewObserver]
 
-  val orientationListener: OrientationEventListener = returning {
+  returning {
     new OrientationEventListener(cxt) {
       override def onOrientationChanged(orientation: Int) =
         controller.deviceOrientation ! Orientation(orientation)
@@ -87,8 +87,7 @@ class CameraPreviewTextureView(val cxt: Context, val attrs: AttributeSet, val de
   def nextCamera(): Unit = {
     currentTexture.foreach {
       case (t, w, h) =>
-        controller.releaseCamera()
-        controller.setNextCamera()
+        controller.goToNextCamera()
         startLoading(t, w, h)
     }
   }
