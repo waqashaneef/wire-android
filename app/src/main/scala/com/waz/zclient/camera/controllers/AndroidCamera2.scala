@@ -63,7 +63,13 @@ class AndroidCamera2(cameraData: CameraData,
     .getOutputSizes(ImageFormat.JPEG)
     .maxBy { size => size.getHeight * size.getWidth }
 
-  private lazy val imageReader: ImageReader = returning(ImageReader.newInstance(compatibleSizes.getWidth, compatibleSizes.getHeight, ImageFormat.JPEG, ImageBufferSize)) { reader =>
+  private lazy val imageReader: ImageReader = returning(
+    ImageReader.newInstance(
+      compatibleSizes.getWidth, compatibleSizes.getHeight,
+      ImageFormat.JPEG,
+      ImageBufferSize
+    )
+  ) { reader =>
     reader.setOnImageAvailableListener(null, imageReaderHandler)
   }
 
@@ -136,7 +142,6 @@ class AndroidCamera2(cameraData: CameraData,
           session.close()
           cameraSession = None
         }
-
       }, cameraHandler)
     } catch {
       case ex: CameraAccessException => error(l"Camera access error when creating camera session: ", ex)
@@ -173,7 +178,7 @@ class AndroidCamera2(cameraData: CameraData,
       }(Threading.Ui)
     } catch {
       case ex: CameraAccessException =>
-        error(l"Camera access error when taking a photo : ", ex)
+        error(l"Camera access error when taking a photo: ", ex)
         promise.failure(ex)
     }
     promise.future
