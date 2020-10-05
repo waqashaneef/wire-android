@@ -1,8 +1,9 @@
 package com.waz.zclient.camera.controllers
 
 import java.io.{ByteArrayOutputStream, Closeable}
-import java.util.Comparator
+import java.util
 import java.util.concurrent.ArrayBlockingQueue
+import java.util.{Collections, Comparator}
 
 import android.content.Context
 import android.graphics._
@@ -11,7 +12,7 @@ import android.media.ImageReader.OnImageAvailableListener
 import android.media.{ExifInterface, Image, ImageReader}
 import android.os.{Handler, HandlerThread}
 import android.util.Size
-import android.view.{Display, Surface, SurfaceHolder, WindowManager}
+import android.view.Surface
 import com.waz.bitmap.BitmapUtils
 import com.waz.log.BasicLogging.LogTag.DerivedLogTag
 import com.waz.threading.Threading
@@ -153,7 +154,11 @@ class AndroidCamera2(cameraData: CameraData,
 
   private def getSupportedFlashMode(fm: FlashMode) = if (getSupportedFlashModes.contains(flashMode)) flashMode.mode else FlashMode.OFF.mode
 
-  override def getPreviewSize: PreviewSize = getPreviewOutputSize(cameraCharacteristics, classOf[SurfaceHolder])
+  override def getPreviewSize: PreviewSize = {
+    val map = cameraCharacteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+    val largest = Collections.max(map.getOutputSizes(ImageFormat.JPEG).toList.asJava, new CompareSizesByArea)
+    chooseOptimalSize(map.getOutputSizes(classOf[SurfaceTexture]), width, height, largest)
+  }
 
   override def takePicture(shutter: => Unit): Future[Array[Byte]] = {
     val promise = Promise[Array[Byte]]
@@ -294,30 +299,23 @@ class AndroidCamera2(cameraData: CameraData,
     }
   }
 
-  def getDisplaySmartSize(display: Display): SmartSize = {
-    val outpoint = new Point()
-    display.getRealSize(outpoint)
-    new SmartSize(outpoint.x, outpoint.y)
+  def chooseOptimalSize(choices: Array[Size], width: Int, height: Int, largest: Size): PreviewSize = {
+    val bigEnough = new util.ArrayList[Size]()
+    val w = largest.getWidth
+    val h = largest.getHeight
+    choices.foreach { option =>
+      if (option.getHeight == option.getWidth * h / w
+        && option.getWidth >= width && option.getHeight >= height) {
+        bigEnough.add(option)
+      }
+    }
+    var size: Size = null
+    if (bigEnough.size() > 0) {
+      size = Collections.min(bigEnough, new CompareSizesByArea())
+    } else {
+      size = choices.head
+    }
+    PreviewSize(size.getWidth, size.getHeight)
   }
-
-  def getPreviewOutputSize[T](characteristics: CameraCharacteristics, targetClass: Class[T]): PreviewSize = {
-    val windowManager = cxt.getApplicationContext.getSystemService(Context.WINDOW_SERVICE).asInstanceOf[WindowManager]
-    val screenSize = getDisplaySmartSize(windowManager.getDefaultDisplay)
-    val hdScreen = screenSize.long >= Size_1080p.long | screenSize.short >= Size_1080p.short
-    val maxSize = if (hdScreen) Size_1080p else screenSize
-
-    val config = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-    val allSizes = config.getOutputSizes(targetClass)
-
-    val validSizes = allSizes.sortBy(s => s.getHeight * s.getWidth).map(s => new SmartSize(s.getWidth, s.getHeight)).reverse
-    val newSmartSize = validSizes.filter(smartSize => smartSize.long <= maxSize.long && smartSize.short <= maxSize.short).head
-    newSmartSize.getSize
-  }
-}
-
-class SmartSize(width: Int, height: Int) {
-  val getSize: PreviewSize = PreviewSize(width, height)
-  val long: Float = Math.max(getSize.w, getSize.h)
-  val short: Float = Math.min(getSize.w, getSize.h)
 }
 
